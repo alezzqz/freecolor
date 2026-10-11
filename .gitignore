@@ -1,0 +1,42 @@
+# Gradle caches and generated build output
+.gradle/
+**/build/
+.kotlin/
+.externalNativeBuild/
+.cxx/
+
+# Machine-specific Android SDK, IDE and daemon JDK configuration
+local.properties
+.idea/
+*.iml
+/gradle/gradle-daemon-jvm.properties
+
+# Local release signing and private key material (keep backed up)
+keystore.properties
+**/keystore/
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Exported packages and diagnostics
+*.apk
+*.aab
+*.ap_
+*.hprof
+*.log
+hs_err_pid*
+replay_pid*
+/captures/
+/screenshots/
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

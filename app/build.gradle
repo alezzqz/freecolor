@@ -1,0 +1,41 @@
+import java.util.Properties
+
+plugins { id 'com.android.application' }
+
+base { archivesName = 'freecolor' }
+
+// Release-подпись читается из app/keystore.properties (storeFile/storePassword/keyAlias/keyPassword).
+// Сам файл и keystore в .gitignore; при их отсутствии release-сборка падает с понятной ошибкой.
+def keystorePropertiesFile = rootProject.file('app/keystore.properties')
+if (!keystorePropertiesFile.exists()) {
+    throw new GradleException("Missing ${keystorePropertiesFile}: create the release keystore before building release.")
+}
+def keystoreProperties = new Properties()
+keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+
+android {
+ namespace 'com.freecolor'
+ compileSdk 34
+ signingConfigs {
+  release {
+   storeFile rootProject.file("app/${keystoreProperties.getProperty('storeFile')}")
+   storePassword keystoreProperties.getProperty('storePassword')
+   keyAlias keystoreProperties.getProperty('keyAlias')
+   keyPassword keystoreProperties.getProperty('keyPassword')
+  }
+ }
+ defaultConfig { applicationId 'com.freecolor'; minSdk 33; targetSdk 34; versionCode 1; versionName '1.0' }
+ buildTypes {
+  release {
+   signingConfig signingConfigs.release
+   // Минификация выключена: игра небольшая, APK без R8 проще проверять и отлаживать.
+   optimization { enable false }
+  }
+ }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {
+ compileOnly 'androidx.annotation:annotation:1.3.0'
+ testImplementation 'junit:junit:4.13.2'
+}
+
