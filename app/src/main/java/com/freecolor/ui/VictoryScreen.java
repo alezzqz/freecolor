@@ -81,7 +81,6 @@ final class VictoryScreen extends FrameLayout {
     private static final float LANTERN_GRADIENT_HEIGHT_RATIO = 2f;
     private static final float LANTERN_RIM_TOP_RATIO = .75f;
     private static final float LANTERN_RIM_BOTTOM_RATIO = 1.1f;
-    private static final int CONTINUE_TEXT_COLOR = 0xff350c64;
     private static final int MOON_HALO_CENTER = 0xfffff7b7;
     private static final int MOON_HALO_MIDDLE = 0xffffe579;
     private static final int MOON_HALO_EDGE = 0x00ffdf75;
@@ -149,12 +148,7 @@ final class VictoryScreen extends FrameLayout {
         addView(kitten);
         continueButton = new Button(context);
         continueButton.setText("Продолжить");
-        continueButton.setAllCaps(false);
-        continueButton.setTextColor(CONTINUE_TEXT_COLOR);
-        continueButton.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
-        continueButton.setBackgroundResource(com.freecolor.R.drawable.continue_background);
-        continueButton.setElevation(0);
-        continueButton.setPadding(0, 0, 0, 0);
+        ActionButtonStyle.apply(continueButton);
         continueButton.setOnClickListener(v -> {
             continueButton.setEnabled(false);
             continueButton.setText("Подождите…");
@@ -305,6 +299,7 @@ final class VictoryScreen extends FrameLayout {
         public void setColorFilter(ColorFilter filter) {
         }
 
+        // Drawable still requires this legacy override on the supported SDK.
         @Override
         public int getOpacity() {
             return PixelFormat.OPAQUE;

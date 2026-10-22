@@ -40,6 +40,13 @@ public final class GameConfig {
     public static final int DIFFICULTY_CYCLE_LEVELS = DIFFICULTY_STAGE_LEVELS * 2;
     public static final int EASY_MAX_COLORS = 6;
     public static final int HARD_MIN_COLORS = EASY_MAX_COLORS + 1;
+    // Versioned daily rules; keep generation deterministic across devices.
+    public static final int DAILY_VERSION = 1;
+    public static final int DAILY_COLORS = 6;
+    public static final int DAILY_SEARCH_BUDGET = 25_000;
+    public static final int DAILY_GENERATION_ATTEMPTS = 4;
+    public static final int DAILY_MOVE_MARGIN = 3;
+    public static final int DAILY_WEEK_GOAL = 5;
     // Persisted global cooldowns; independent of level and undo snapshots.
     public static final long MILLIS_PER_SECOND = 1000L;
     public static final int SECONDS_PER_MINUTE = 60;

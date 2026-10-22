@@ -35,6 +35,10 @@ import com.freecolor.R;
 import com.freecolor.core.*;
 
 import java.text.MessageFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+import android.app.AlertDialog;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
@@ -68,6 +72,17 @@ public final class MainActivity extends Activity {
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private GameEngine engine;
+    private GameEngine ordinaryEngine;
+    private DailySession dailySession;
+    private DailyProgress dailyProgress = new DailyProgress();
+    private DailyPersistence dailyPersistence;
+    private boolean dailyMode, storageReady, preparingDaily, saveFailed;
+    private int generationId;
+    private DailyModeCard modeCard;
+    private Button todayButton;
+    private TextView dailyInfo;
+    private DailyResultScreen dailyResult;
+    private LocalDate displayedDate = LocalDate.now();
     private long level = GameConfig.FIRST_LEVEL;
     private GamePersistence persistence;
     private GameView board;
@@ -82,7 +97,15 @@ public final class MainActivity extends Activity {
     private final Runnable cooldownTick = new Runnable() {
         @Override
         public void run() {
-            board.setExtraWaitMillis(extraCooldown.remainingMillis());
+            LocalDate today = LocalDate.now();
+            if (!displayedDate.equals(today)) {
+                displayedDate = today;
+                if (dailyResult != null) {
+                    screen.removeView(dailyResult);
+                    dailyResult = null;
+                    showVictory();
+                }
+            }
             refreshControls();
             board.postDelayed(this, COOLDOWN_TICK_MILLIS);
         }
@@ -93,6 +116,7 @@ public final class MainActivity extends Activity {
     public void onCreate(Bundle b) {
         super.onCreate(b);
         persistence = new GamePersistence(this);
+        dailyPersistence = new DailyPersistence(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP));
@@ -111,13 +135,19 @@ public final class MainActivity extends Activity {
         LinearLayout controls = new LinearLayout(this);
         controls.setGravity(Gravity.CENTER);
         restart = button("Заново", R.drawable.ic_restart, controls, () -> {
-                    engine.restart();
-                    save();
-                    refresh();
+                    if (dailyMode) {
+                        restartDaily();
+                    } else {
+                        engine.restart();
+                        save();
+                        refresh();
+                    }
                 }
         );
         undo = button("Отмена", R.drawable.ic_undo, controls, () -> {
-                    if (undoAllowance.remaining() > 0 && engine.undo()) {
+                    if (dailyMode) {
+                        dailySession.undo();
+                    } else if (undoAllowance.remaining() > 0 && engine.undo()) {
                         undoAllowance.consume();
                     }
                     save();
@@ -139,20 +169,45 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(MATCH_PARENT, dp(UNDO_LABEL_HEIGHT_DP), Gravity.BOTTOM);
         labelParams.bottomMargin = dp(UNDO_LABEL_BOTTOM_MARGIN_DP);
         undoFrame.addView(undoLabel, labelParams);
+        modeCard = new DailyModeCard(this, () -> {
+            if (dailyMode) {
+                switchOrdinary();
+            } else {
+                openDaily();
+            }
+        });
         root.addView(controls, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
         LinearLayout.LayoutParams ribbonParams = new LinearLayout.LayoutParams(dp(LEVEL_RIBBON_WIDTH_DP), dp(LEVEL_RIBBON_HEIGHT_DP));
         ribbonParams.gravity = Gravity.CENTER_HORIZONTAL;
         ribbonParams.topMargin = dp(LEVEL_RIBBON_TOP_MARGIN_DP);
         ribbonParams.bottomMargin = dp(LEVEL_RIBBON_BOTTOM_MARGIN_DP);
         root.addView(title, ribbonParams);
-        root.addView(status);
+        dailyInfo = new TextView(this);
+        dailyInfo.setTextColor(STATUS_TEXT_COLOR);
+        dailyInfo.setTextSize(13);
+        dailyInfo.setGravity(Gravity.CENTER);
+        root.addView(dailyInfo, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
+        statusParams.gravity = Gravity.CENTER_HORIZONTAL;
+        statusParams.topMargin = dp(10);
+        root.addView(status, statusParams);
         root.addView(board, new LinearLayout.LayoutParams(MATCH_PARENT, 0, 1));
+        todayButton = new Button(this);
+        todayButton.setText("Задача на сегодня");
+        ActionButtonStyle.apply(todayButton);
+        todayButton.setOnClickListener(view -> openDaily());
+        LinearLayout.LayoutParams todayParams = new LinearLayout.LayoutParams(MATCH_PARENT, dp(48));
+        todayParams.bottomMargin = dp(8);
+        root.addView(todayButton, todayParams);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT);
+        cardParams.topMargin = dp(16);
+        root.addView(modeCard, cardParams);
         screen = new FrameLayout(this);
         screen.addView(root, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
         setContentView(screen);
         board.listener = new GameView.Listener() {
             public void unlockExtra() {
-                if (!generating && !board.busy && engine != null && extraCooldown.available() && engine.addTube()) {
+                if (!dailyMode && !generating && !board.busy && engine != null && extraCooldown.available() && engine.addTube()) {
                     extraCooldown.acquired();
                     save();
                     refresh();
@@ -161,8 +216,10 @@ public final class MainActivity extends Activity {
 
             public void pour(Move m) {
                 GameState before = engine.state();
-                if (engine.move(m)) {
-                    if (engine.state().solved()) {
+                if (dailyMode ? dailySession.move(m) : engine.move(m)) {
+                    if (dailyMode) {
+                        dailyProgress.record(dailySession);
+                    } else if (engine.state().solved()) {
                         level++;
                     }
                     save();
@@ -182,6 +239,11 @@ public final class MainActivity extends Activity {
         GamePersistence.Saved saved;
         try {
             saved = persistence.load();
+            DailyPersistence.Saved daily = dailyPersistence.load();
+            dailySession = daily.session();
+            dailyProgress = daily.progress();
+            dailyMode = daily.active();
+            storageReady = true;
         } catch (RuntimeException error) {
             title.setText("FreeColor");
             status.setText("Не удалось восстановить прогресс. Исходные данные сохранены.");
@@ -190,13 +252,20 @@ public final class MainActivity extends Activity {
         }
         if (saved != null) {
             level = saved.level();
-            engine = saved.engine();
+            ordinaryEngine = saved.engine();
+            engine = dailyMode ? dailySession.engine() : ordinaryEngine;
             extraCooldown = new ExtraTubeCooldown(saved.extraAvailableAt(), System::currentTimeMillis);
             undoAllowance = new UndoAllowance(saved.undoRemaining(), saved.undoRefillAt(), System::currentTimeMillis);
             refresh();
-            if (saved.rewound()) {
+            if (saved.rewound() && !dailyMode) {
                 status.setText("Прогресс возвращён до заполнения большой дополнительной пробирки");
             }
+            if (engine.state().solved()) {
+                showVictory();
+            }
+        } else if (dailyMode) {
+            engine = dailySession.engine();
+            refresh();
             if (engine.state().solved()) {
                 showVictory();
             }
@@ -231,31 +300,76 @@ public final class MainActivity extends Activity {
     }
 
     private void save() {
-        if (engine != null && !persistence.save(level, engine, extraCooldown.availableAt(), undoAllowance.remaining(), undoAllowance.refillAt())) {
+        if (!storageReady) {
+            return;
+        }
+        boolean saved = true;
+        if (ordinaryEngine != null) {
+            saved = persistence.save(level, ordinaryEngine, extraCooldown.availableAt(),
+                    undoAllowance.remaining(), undoAllowance.refillAt());
+        }
+        saveFailed = !dailyPersistence.save(dailySession, dailyProgress, dailyMode) || !saved;
+        if (saveFailed) {
             status.setText("Не удалось сохранить прогресс");
         }
     }
 
     private void refreshControls() {
-        boolean active = engine != null && !generating && !board.busy && !engine.state().solved();
-        restart.setEnabled(active);
+        // Animation guards live in the click handlers so controls keep a stable appearance.
+        boolean active = engine != null && !generating && !engine.state().solved();
+        restart.setEnabled(active && (!dailyMode || dailySession.challenge().date().equals(LocalDate.now())));
         int remaining = undoAllowance.remaining();
-        undo.setEnabled(active && !engine.history().isEmpty() && remaining > 0);
+        undo.setEnabled(active && !engine.history().isEmpty() && (dailyMode || remaining > 0));
         long seconds = (undoAllowance.waitMillis() + GameConfig.MILLIS_PER_SECOND - 1) / GameConfig.MILLIS_PER_SECOND;
         if (undoLabel != null) {
-            undoLabel.setTextSize(remaining > 0 ? UNDO_COUNT_TEXT_SP : UNDO_TIMER_TEXT_SP);
-            undoLabel.setText(remaining > 0 ? Integer.toString(remaining) : String.format(java.util.Locale.ROOT, "%02d:%02d", seconds / GameConfig.SECONDS_PER_MINUTE, seconds % GameConfig.SECONDS_PER_MINUTE));
+            undoLabel.setTextSize(dailyMode || remaining > 0 ? UNDO_COUNT_TEXT_SP : UNDO_TIMER_TEXT_SP);
+            undoLabel.setText(dailyMode ? "∞" : remaining > 0 ? Integer.toString(remaining)
+                    : String.format(Locale.ROOT, "%02d:%02d", seconds / GameConfig.SECONDS_PER_MINUTE,
+                    seconds % GameConfig.SECONDS_PER_MINUTE));
         }
-        undo.setContentDescription(remaining > 0 ? "Отмена: осталось " + remaining : "Отмена доступна через " + seconds + " секунд");
-        board.inputEnabled = active;
+        undo.setContentDescription(dailyMode ? "Отмена без ограничений; потраченные ходы сохраняются"
+                : remaining > 0 ? "Отмена: осталось " + remaining : "Отмена доступна через " + seconds + " секунд");
+        board.inputEnabled = active && !board.busy;
         board.setExtraWaitMillis(extraCooldown.remainingMillis());
+        boolean canSwitch = storageReady && !generating && engine != null;
+        modeCard.setEnabled(canSwitch);
+        todayButton.setEnabled(canSwitch);
+        LocalDate today = LocalDate.now();
+        int days = Math.min(GameConfig.DAILY_WEEK_GOAL, dailyProgress.weekCount(today));
+        modeCard.update(dailyMode, dailyProgress.completed(today), days, GameConfig.DAILY_WEEK_GOAL, level);
+        boolean previousDay = dailyMode && dailySession != null && !dailySession.challenge().date().equals(today);
+        todayButton.setVisibility(previousDay ? android.view.View.VISIBLE : android.view.View.GONE);
+        dailyInfo.setVisibility(dailyMode ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (dailyMode && dailySession != null) {
+            int completedWeeks = dailyProgress.completedWeeks();
+            String date = dailySession.challenge().date().format(
+                    DateTimeFormatter.ofPattern("d MMMM", Locale.forLanguageTag("ru")));
+            dailyInfo.setText(completedWeeks > 0
+                    ? getString(R.string.daily_date_with_weeks, date, completedWeeks) : date);
+        }
+        if (dailyMode && dailySession != null && !generating) {
+            status.setText(dailySession.bestMoves() > 0
+                    ? getString(R.string.daily_moves_with_best, dailySession.moves(),
+                            dailySession.challenge().targetMoves(), dailySession.bestMoves())
+                    : getString(R.string.daily_moves, dailySession.moves(), dailySession.challenge().targetMoves()));
+        }
+        if (saveFailed) {
+            status.setText("Не удалось сохранить прогресс");
+        }
+        status.setVisibility(status.getText().length() > 0 ? android.view.View.VISIBLE : android.view.View.GONE);
+        undo.setTooltipText(dailyMode ? "Отмена не возвращает потраченные ходы" : "Отмена");
         restart.setAlpha(restart.isEnabled() ? 1f : DISABLED_CONTROL_ALPHA);
         undo.setAlpha(undo.isEnabled() ? 1f : DISABLED_CONTROL_ALPHA);
     }
 
     private void refresh() {
-        title.setText(MessageFormat.format("Уровень {0}", level));
-        status.setText(generating ? "Готовим новый уровень…" : "");
+        title.setText(dailyMode ? "Задача дня" : MessageFormat.format("Уровень {0}", level));
+        status.setText(generating ? preparingDaily ? "Готовим задачу дня…" : "Готовим новый уровень…" : "");
+        status.setBackgroundResource(dailyMode ? R.drawable.daily_counter_background : 0);
+        status.setPadding(dailyMode ? dp(16) : 0, dailyMode ? dp(8) : 0,
+                dailyMode ? dp(16) : 0, dailyMode ? dp(8) : 0);
+        status.setTextColor(dailyMode ? 0xffe1d9f6 : STATUS_TEXT_COLOR);
+        board.setExtraAllowed(!dailyMode);
         if (engine != null) {
             board.setState(engine.state());
         }
@@ -266,14 +380,25 @@ public final class MainActivity extends Activity {
         save();
         refreshControls();
         // Let the last tube's completion sparkle finish before the full-screen result.
+        GameEngine finished = engine;
         board.postDelayed(() -> {
-            if (!destroyed) {
+            if (!destroyed && engine == finished && engine.state().solved() && !generating) {
                 showVictory();
             }
         }, VICTORY_DELAY_MILLIS);
     }
 
     private void showVictory() {
+        if (dailyMode) {
+            if (dailyResult == null) {
+                boolean current = dailySession.challenge().date().equals(LocalDate.now());
+                dailyResult = new DailyResultScreen(this, dailySession, dailyProgress,
+                        current ? this::restartDaily : null, this::switchOrdinary,
+                        current ? null : this::openDaily);
+                screen.addView(dailyResult, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
+            }
+            return;
+        }
         if (victoryScreen != null) {
             return;
         }
@@ -287,16 +412,19 @@ public final class MainActivity extends Activity {
 
     private void generate() {
         generating = true;
+        preparingDaily = false;
+        final int request = ++generationId;
         refresh();
         final long requestedLevel = level;
         worker.execute(() -> {
                     try {
                         GameState next = new LevelGenerator().generateForLevel(requestedLevel);
                         runOnUiThread(() -> {
-                                    if (destroyed) {
+                                    if (destroyed || request != generationId) {
                                         return;
                                     }
                                     engine = new GameEngine(next);
+                                    ordinaryEngine = engine;
                                     generating = false;
                                     save();
                                     refresh();
@@ -309,7 +437,7 @@ public final class MainActivity extends Activity {
                     } catch (Exception e) {
                         android.util.Log.e("FreeColor", "Generation failed", e);
                         runOnUiThread(() -> {
-                                    if (destroyed) {
+                                    if (destroyed || request != generationId) {
                                         return;
                                     }
                                     status.setText("Повторяем проверку уровня…");
@@ -319,7 +447,7 @@ public final class MainActivity extends Activity {
                                         return;
                                     }
                                     board.postDelayed(() -> {
-                                                if (!destroyed) {
+                                                if (!destroyed && request == generationId) {
                                                     generate();
                                                 }
                                             }
@@ -329,6 +457,120 @@ public final class MainActivity extends Activity {
                     }
                 }
         );
+    }
+
+    private void clearResults() {
+        if (victoryScreen != null) {
+            screen.removeView(victoryScreen);
+            victoryScreen = null;
+        }
+        if (dailyResult != null) {
+            screen.removeView(dailyResult);
+            dailyResult = null;
+        }
+    }
+
+    private boolean canChangeMode() {
+        return storageReady && !generating && !board.busy;
+    }
+
+    private void switchOrdinary() {
+        if (!canChangeMode()) {
+            return;
+        }
+        clearResults();
+        dailyMode = false;
+        engine = ordinaryEngine;
+        save();
+        if (engine == null) {
+            generate();
+        } else {
+            refresh();
+            if (engine.state().solved()) {
+                showVictory();
+            }
+        }
+    }
+
+    private void activateDaily() {
+        clearResults();
+        dailyMode = true;
+        engine = dailySession.engine();
+        save();
+        refresh();
+        if (engine.state().solved()) {
+            showVictory();
+        }
+    }
+
+    private void openDaily() {
+        if (!canChangeMode()) {
+            return;
+        }
+        LocalDate today = LocalDate.now();
+        if (dailySession != null && dailySession.challenge().date().equals(today)) {
+            activateDaily();
+        } else if (dailySession != null && !dailySession.engine().state().solved() && dailySession.moves() > 0) {
+            new AlertDialog.Builder(this).setTitle("Есть незаконченная задача")
+                    .setMessage("Можно закончить прежнюю задачу или заменить её задачей на сегодня.")
+                    .setPositiveButton("Продолжить прежнюю", (dialog, which) -> activateDaily())
+                    .setNegativeButton("Новая задача", (dialog, which) -> generateDaily(LocalDate.now()))
+                    .show();
+        } else {
+            generateDaily(today);
+        }
+    }
+
+    private void restartDaily() {
+        if (!canChangeMode()) {
+            return;
+        }
+        if (!dailySession.challenge().date().equals(LocalDate.now())) {
+            openDaily();
+            return;
+        }
+        clearResults();
+        dailySession.restart();
+        save();
+        refresh();
+    }
+
+    private void generateDaily(LocalDate date) {
+        if (!canChangeMode()) {
+            return;
+        }
+        clearResults();
+        generating = true;
+        preparingDaily = true;
+        final int request = ++generationId;
+        refresh();
+        worker.execute(() -> {
+            try {
+                DailyChallenge challenge = new DailyGenerator().generate(date);
+                runOnUiThread(() -> {
+                    if (destroyed || request != generationId) {
+                        return;
+                    }
+                    generating = false;
+                    preparingDaily = false;
+                    dailySession = new DailySession(challenge);
+                    activateDaily();
+                });
+            } catch (CancellationException cancelled) {
+                // Activity destruction interrupts bounded search without selecting a different board.
+            } catch (Exception error) {
+                android.util.Log.e("FreeColor", "Daily generation failed", error);
+                runOnUiThread(() -> {
+                    if (destroyed || request != generationId) {
+                        return;
+                    }
+                    generating = false;
+                    preparingDaily = false;
+                    refreshControls();
+                    status.setText("Не удалось подготовить задачу дня. Попробуйте снова.");
+                });
+            }
+        });
     }
 
     @Override

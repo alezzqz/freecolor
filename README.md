@@ -45,8 +45,39 @@ a different application.
   GameView renders responsive glass tubes and animates pours with Canvas/ValueAnimator,
   VictoryScreen draws the full-screen result page.
 - `app/src/main/res`: native theme, vector controls and original adaptive launcher artwork.
-- `app/src/test`: six JUnit 4 classes (22 tests) covering core rules, history and undo,
+- `app/src/test`: seven JUnit 4 classes (33 tests) covering core rules, history and undo,
   completion, extra-tube cooldown, hidden visibility and generation/solution replay.
+
+## Daily challenge
+
+The game offers one offline, date-seeded challenge per local day, independently of ordinary
+level progress. Version 1 uses six open colors and two empty full-capacity tubes, with no
+additional tube. A compact breadth-first solver finds a shortest solution; the move target
+is that length plus three pours. Four deterministic candidate attempts are bounded at
+25,000 states each; a preverified reserve board is used if none can be verified. Search
+runs on the background executor and is interrupted when the activity is destroyed.
+
+Each successful pour counts as one move. Daily undo is unlimited and does not refund moves;
+restart resets the attempt counter while preserving the day's best result. Finishing over
+the target allows another attempt but gives no completion credit. Daily and ordinary
+attempts are saved independently, including the selected mode and undo histories.
+
+The weekly goal is five distinct successful daily challenges, Monday through Sunday.
+Replay cannot duplicate credit or remove an existing achievement. There is no gameplay
+timer or calendar. Weekly indicators and a lifetime count of completed weeks show progress.
+An unfinished older challenge can be completed after midnight, with credit belonging to
+its original date and week. Starting today's challenge replaces the older attempt after
+an explicit choice; older challenges cannot be restarted.
+
+Daily challenge definitions, attempt counters, best results and completion dates are stored
+together under a separate versioned preference record. Ordinary saves retain their existing
+v1-v5 compatibility. Persisting the board, generation version and move target protects an
+already started challenge from future generator updates.
+
+Core coverage includes daily determinism and solution replay over 365 dates, shortest-path
+comparison against an independent search, reserve verification, cancellation, attempt
+restoration, undo accounting, repeat credit, late Sunday completion and year/leap-day week
+boundaries. Run :app:testDebugUnitTest after changing daily rules.
 
 ## License
 

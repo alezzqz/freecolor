@@ -39,11 +39,25 @@ final class GameView extends View {
     private static final float MAX_TUBE_WIDTH_DP = 130f;
     private static final float BOARD_VERTICAL_RESERVE_DP = 60f;
     private static final float COLUMN_WIDTH_RATIO = 1.65f;
-    private static final float ROW_WIDTH_RATIO = 3.65f;
     private static final float TUBE_HEIGHT_RATIO = 2.85f;
     private static final float TUBE_WIDTH_SCALE = 1.06f;
     private static final float TUBE_GAP_RATIO = .65f;
+    private static final int COMPACT_LAYOUT_TUBE_COUNT = 8;
+    private static final float COMPACT_TUBE_GAP_RATIO = .25f;
+    private static final int DENSE_LAYOUT_TUBE_COUNT = 13;
+    private static final float DENSE_TUBE_GAP_RATIO = .18f;
     private static final float ROW_GAP_RATIO = .8f;
+    private static final int FEW_COLORS_MAX = 5;
+    private static final float FEW_COLORS_EXTRA_GAP_RATIO = .30f;
+    private static final float FEW_COLORS_ROW_GAP_RATIO = 1.25f;
+    private static final int SMALL_PALETTE_MAX_COLORS = 6;
+    private static final float SMALL_PALETTE_EXTRA_GAP_RATIO = .10f;
+    private static final float SMALL_PALETTE_ROW_GAP_RATIO = 1f;
+    private static final int LARGE_PALETTE_COLORS = 8;
+    private static final float LARGE_PALETTE_TUBE_GAP_RATIO = .12f;
+    private static final float LARGE_PALETTE_ROW_GAP_RATIO = .65f;
+    private static final int VERY_LARGE_PALETTE_COLORS = 10;
+    private static final float VERY_LARGE_PALETTE_ROW_GAP_RATIO = .55f;
     private static final float BOARD_TOP_OFFSET_RATIO = .4f;
 
     // Pour animation phases and geometry.
@@ -197,7 +211,9 @@ final class GameView extends View {
     private ValueAnimator selectionAnimator;
     private float[] selectionOffsets = new float[0];
     private float pourStartLift;
+    private float selectionRowClearance;
     private long extraWaitMillis;
+    private boolean extraAllowed = true;
     private long[] completionStarted = new long[0];
     private static final long COMPLETION_EFFECT_MILLIS = 1000;
 
@@ -233,10 +249,36 @@ final class GameView extends View {
             return;
         }
         int n = visibleTubeCount(), bestCols = MIN_COLUMNS;
+        float gapRatio = n >= COMPACT_LAYOUT_TUBE_COUNT ? COMPACT_TUBE_GAP_RATIO : TUBE_GAP_RATIO;
+        if (n >= DENSE_LAYOUT_TUBE_COUNT) {
+            gapRatio = DENSE_TUBE_GAP_RATIO;
+        }
+        int colors = state.count() - GameConfig.EMPTY_TUBES - (state.extra ? 1 : 0);
+        boolean largePalette = colors >= LARGE_PALETTE_COLORS;
+        float rowGapRatio = largePalette ? LARGE_PALETTE_ROW_GAP_RATIO : ROW_GAP_RATIO;
+        if (largePalette) {
+            gapRatio = LARGE_PALETTE_TUBE_GAP_RATIO;
+        }
+        float extraGapRatio = colors <= FEW_COLORS_MAX
+                ? FEW_COLORS_EXTRA_GAP_RATIO : SMALL_PALETTE_EXTRA_GAP_RATIO;
+        if (colors <= SMALL_PALETTE_MAX_COLORS) {
+            gapRatio += extraGapRatio;
+            rowGapRatio = colors <= FEW_COLORS_MAX
+                    ? FEW_COLORS_ROW_GAP_RATIO : SMALL_PALETTE_ROW_GAP_RATIO;
+        } else if (colors >= VERY_LARGE_PALETTE_COLORS) {
+            rowGapRatio = VERY_LARGE_PALETTE_ROW_GAP_RATIO;
+        }
+        float rowWidthRatio = TUBE_HEIGHT_RATIO + rowGapRatio;
         float best = 0;
         for (int cols = MIN_COLUMNS; cols <= MAX_COLUMNS; cols++) {
             int rows = (n + cols - 1) / cols;
-            float w = Math.min(dp(MAX_TUBE_WIDTH_DP), Math.min(getWidth() / (cols * COLUMN_WIDTH_RATIO), (getHeight() - dp(BOARD_VERTICAL_RESERVE_DP)) / (rows * ROW_WIDTH_RATIO)));
+            // Dense boards spend less width on gaps, including the two outer margins.
+            float widthBudget = n >= COMPACT_LAYOUT_TUBE_COUNT
+                    ? cols * TUBE_WIDTH_SCALE + (cols + 1) * gapRatio
+                    : cols * (COLUMN_WIDTH_RATIO
+                            + (colors <= SMALL_PALETTE_MAX_COLORS ? extraGapRatio : 0));
+            float w = Math.min(dp(MAX_TUBE_WIDTH_DP), Math.min(getWidth() / widthBudget,
+                    (getHeight() - dp(BOARD_VERTICAL_RESERVE_DP)) / (rows * rowWidthRatio)));
             if (w > best) {
                 best = w;
                 bestCols = cols;
@@ -244,7 +286,9 @@ final class GameView extends View {
         }
         // Widen the glass independently of the original height and spacing budget.
         float w = best * TUBE_WIDTH_SCALE, h = best * TUBE_HEIGHT_RATIO;
-        float gap = best * TUBE_GAP_RATIO, rowH = h + best * ROW_GAP_RATIO;
+        float gap = best * gapRatio, rowH = h + best * rowGapRatio;
+        // Keep a raised tube clear of the row above even when the board is tightly packed.
+        selectionRowClearance = Math.max(0, best * rowGapRatio - dp(SELECTION_TOP_CLEARANCE_DP));
         int rows = (n + bestCols - 1) / bestCols;
         float top = (getHeight() - rows * rowH) / 2 + best * BOARD_TOP_OFFSET_RATIO;
         boxes = new RectF[n];
@@ -261,8 +305,15 @@ final class GameView extends View {
         }
     }
 
+    void setExtraAllowed(boolean allowed) {
+        extraAllowed = allowed;
+        layoutTubes();
+        requestLayout();
+        invalidate();
+    }
+
     private int visibleTubeCount() {
-        return state.count() + (state.extra ? 0 : 1);
+        return state.count() + (state.extra || !extraAllowed ? 0 : 1);
     }
 
     @Override
@@ -589,7 +640,11 @@ final class GameView extends View {
 
     private float selectionLift(int index) {
         RectF box = boxes[index];
-        return Math.max(0, Math.min(Math.min(dp(SELECTION_LIFT_DP), box.width() * SELECTION_LIFT_WIDTH_RATIO), box.top - dp(SELECTION_TOP_CLEARANCE_DP)));
+        float lift = Math.min(dp(SELECTION_LIFT_DP), box.width() * SELECTION_LIFT_WIDTH_RATIO);
+        if (box.top > boxes[0].top) {
+            lift = Math.min(lift, selectionRowClearance);
+        }
+        return Math.max(0, Math.min(lift, box.top - dp(SELECTION_TOP_CLEARANCE_DP)));
     }
 
     private RectF displayedBox(int index) {

@@ -55,7 +55,7 @@ final class GamePersistence {
         preferences = c.getSharedPreferences("progress", Context.MODE_PRIVATE);
     }
 
-    private JSONArray state(GameState s) throws JSONException {
+    static JSONArray state(GameState s) throws JSONException {
         JSONArray tubes = new JSONArray();
         for (int[] t : s.copy()) {
             JSONArray a = new JSONArray();
@@ -75,7 +75,7 @@ final class GamePersistence {
         return new JSONArray().put(s.extra).put(tubes).put(s.hiddenColors).put(known);
     }
 
-    private GameState read(JSONArray a, boolean legacy) throws JSONException {
+    static GameState read(JSONArray a, boolean legacy) throws JSONException {
         JSONArray tubes = a.getJSONArray(STATE_TUBES_INDEX);
         int[][] t = new int[tubes.length()][];
         for (int i = 0; i < t.length; i++) {
