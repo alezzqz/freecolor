@@ -44,6 +44,18 @@ public class CooldownTest {
         assertEquals(900000, restored.remainingMillis());
     }
 
+    @Test
+    public void rewardShortensActiveTimerAndSurvivesRestoration() {
+        ExtraTubeCooldown timer = new ExtraTubeCooldown(91000, () -> 1000);
+        timer.reward();
+        assertEquals(30000, timer.remainingMillis());
+        timer = new ExtraTubeCooldown(timer.availableAt(), () -> 1000);
+        timer.reward();
+        assertTrue(timer.available());
+        timer.reward();
+        assertEquals(0, timer.remainingMillis());
+    }
+
     @Test(expected = IllegalStateException.class)
     public void preventsRepeatedAcquisition() {
         ExtraTubeCooldown timer = new ExtraTubeCooldown(0, () -> 1000);

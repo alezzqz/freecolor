@@ -61,18 +61,16 @@ final class GameView extends View {
     private static final float BOARD_TOP_OFFSET_RATIO = .4f;
 
     // Pour animation phases and geometry.
-    private static final long POUR_DURATION_MILLIS = 850;
-    private static final long SELECTION_DURATION_MILLIS = 180;
+    private static final long POUR_DURATION_MILLIS = 900;
+    private static final long SELECTION_DURATION_MILLIS = 240;
     private static final float POUR_APPROACH_END = .28f;
     private static final float POUR_RETURN_DURATION = .22f;
     private static final float POUR_TRANSFER_DURATION = .5f;
-    private static final float POUR_STREAM_END = .8f;
-    private static final float POUR_HORIZONTAL_OFFSET_RATIO = .65f;
+    private static final float POUR_STREAM_END = POUR_APPROACH_END + POUR_TRANSFER_DURATION;
     private static final float POUR_LIFT_HEIGHT_RATIO = .3f;
     private static final float POUR_ANGLE_DEGREES = 65f;
     private static final float POUR_PIVOT_RATIO = .2f;
     private static final float POUR_STREAM_WIDTH_DP = 5f;
-    private static final float POUR_STREAM_START_OFFSET_DP = 18f;
 
     // Glass and liquid geometry; shading multipliers and stops.
     private static final float GLASS_INSET_RATIO = .1f;
@@ -215,7 +213,7 @@ final class GameView extends View {
     private long extraWaitMillis;
     private boolean extraAllowed = true;
     private long[] completionStarted = new long[0];
-    private static final long COMPLETION_EFFECT_MILLIS = 1000;
+    private static final long COMPLETION_EFFECT_MILLIS = 1400;
 
     GameView(Context c) {
         super(c);
@@ -351,7 +349,11 @@ final class GameView extends View {
             RectF src = boxes[moving.source()], dst = boxes[moving.destination()];
 
             float travel = Math.min(1, progress / POUR_APPROACH_END) * Math.min(1, (1 - progress) / POUR_RETURN_DURATION);
-            float x = src.left + (dst.centerX() - src.centerX() - src.width() * POUR_HORIZONTAL_OFFSET_RATIO) * travel;
+            double fullAngle = Math.toRadians(POUR_ANGLE_DEGREES);
+            float rimOffset = src.width() * (.5f - GLASS_INSET_RATIO) + dp(RIM_OVERHANG_DP);
+            float lipOffset = rimOffset * (float) Math.cos(fullAngle)
+                    + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(fullAngle);
+            float x = src.left + (dst.centerX() - src.centerX() - lipOffset) * travel;
             float remainingLift = pourStartLift * (1 - Math.min(1, progress / POUR_APPROACH_END));
             float y = src.top + (dst.top - src.height() * POUR_LIFT_HEIGHT_RATIO - src.top) * travel - remainingLift;
             RectF b = pourBounds;
@@ -366,7 +368,12 @@ final class GameView extends View {
                 int capacity = state.capacity(moving.destination());
                 float surface = dst.bottom - liquidFillHeight(dst,
                         before.size(moving.destination()) + pourAmount * transfer(), capacity);
-                c.drawLine(dst.centerX(), dst.top - dp(POUR_STREAM_START_OFFSET_DP), dst.centerX(), surface, paint);
+                double angle = Math.toRadians(POUR_ANGLE_DEGREES * travel);
+                float lipX = b.centerX() + rimOffset * (float) Math.cos(angle)
+                        + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(angle);
+                float lipY = b.top + rimOffset * (float) Math.sin(angle)
+                        + src.width() * POUR_PIVOT_RATIO * (1 - (float) Math.cos(angle));
+                c.drawLine(lipX, lipY, dst.centerX(), surface, paint);
             }
         }
         drawCompletionEffects(c);
@@ -441,6 +448,16 @@ final class GameView extends View {
         if (active) {
             postInvalidateOnAnimation();
         }
+    }
+
+    android.graphics.PointF extraRewardPosition() {
+        if (boxes.length == 0) {
+            return new android.graphics.PointF(getWidth() / 2f, getHeight() / 2f);
+        }
+        RectF bounds = boxes[boxes.length - 1];
+        float centerY = (bounds.top + extraCompartmentTop(bounds)) / 2f;
+        float radius = Math.min(dp(EXTRA_BUTTON_RADIUS_DP), bounds.height() * EXTRA_BUTTON_RADIUS_HEIGHT_RATIO);
+        return new android.graphics.PointF(bounds.centerX(), centerY + radius + dp(EXTRA_COUNTDOWN_OFFSET_DP));
     }
 
     private void drawLockedExtra(Canvas canvas, RectF bounds) {

@@ -33,7 +33,7 @@ final class ActionButtonStyle {
     static void apply(Button button) {
         button.setAllCaps(false);
         button.setTextColor(TEXT_COLOR);
-        button.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
+        button.setTypeface(Typeface.create("sans", Typeface.BOLD));
         button.setBackgroundResource(R.drawable.continue_background);
         button.setElevation(0);
         button.setPadding(0, 0, 0, 0);

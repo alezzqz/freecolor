@@ -24,6 +24,26 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.Assert.*;
 
 public class UndoAllowanceTest {
+    @Test public void rewardRestoresOneUseWithoutExceedingLimit() {
+        UndoAllowance allowance = new UndoAllowance(9, 0, () -> 1000);
+        allowance.reward();
+        allowance.reward();
+        assertEquals(10, allowance.remaining());
+        assertEquals(0, allowance.refillAt());
+    }
+
+    @Test public void rewardShortensTimerAndRefillsWhenItReachesNow() {
+        AtomicLong now = new AtomicLong(1000);
+        UndoAllowance allowance = new UndoAllowance(0, 91000, now::get);
+        allowance.reward();
+        assertEquals(30000, allowance.waitMillis());
+        assertEquals(0, allowance.remaining());
+        allowance = new UndoAllowance(0, allowance.refillAt(), now::get);
+        allowance.reward();
+        assertEquals(10, allowance.remaining());
+        assertEquals(0, allowance.refillAt());
+    }
+
     @Test public void timerStartsOnlyAfterTenthUseAndRefillsAtBoundary() {
         AtomicLong now=new AtomicLong(1000);
         UndoAllowance allowance=new UndoAllowance(10,0,now::get);

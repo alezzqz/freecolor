@@ -58,6 +58,16 @@ public final class UndoAllowance {
         }
     }
 
+    public void reward() {
+        if (remaining() == 0) {
+            refillAt = Math.max(clock.getAsLong(), refillAt
+                    - GameConfig.SECONDS_PER_MINUTE * GameConfig.MILLIS_PER_SECOND);
+            remaining();
+        } else if (remaining < LIMIT) {
+            remaining++;
+        }
+    }
+
     public long refillAt() {
         remaining();
         return refillAt;

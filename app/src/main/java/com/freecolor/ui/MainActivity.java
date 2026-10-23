@@ -67,7 +67,7 @@ public final class MainActivity extends Activity {
 
     // UI scheduling.
     private static final long COOLDOWN_TICK_MILLIS = 1000;
-    private static final long VICTORY_DELAY_MILLIS = 650;
+    private static final long VICTORY_DELAY_MILLIS = 900;
     private static final long GENERATION_RETRY_MILLIS = 2000;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -94,6 +94,9 @@ public final class MainActivity extends Activity {
     private ExtraTubeCooldown extraCooldown = new ExtraTubeCooldown(0, System::currentTimeMillis);
     private UndoAllowance undoAllowance = new UndoAllowance(UndoAllowance.LIMIT, 0, System::currentTimeMillis);
     private TextView undoLabel;
+    private int undoRewardWins;
+    private int extraRewardWins;
+    private int pendingRewardEffects;
     private final Runnable cooldownTick = new Runnable() {
         @Override
         public void run() {
@@ -221,6 +224,15 @@ public final class MainActivity extends Activity {
                         dailyProgress.record(dailySession);
                     } else if (engine.state().solved()) {
                         level++;
+                        resetUnavailableRewards();
+                        if (undoAllowance.remaining() < UndoAllowance.LIMIT && ++undoRewardWins == 3) {
+                            undoRewardWins = 0;
+                            pendingRewardEffects |= 1;
+                        }
+                        if (!extraCooldown.available() && ++extraRewardWins == 5) {
+                            extraRewardWins = 0;
+                            pendingRewardEffects |= 2;
+                        }
                     }
                     save();
                     board.animatePour(before, engine.state(), m, () -> {
@@ -256,6 +268,9 @@ public final class MainActivity extends Activity {
             engine = dailyMode ? dailySession.engine() : ordinaryEngine;
             extraCooldown = new ExtraTubeCooldown(saved.extraAvailableAt(), System::currentTimeMillis);
             undoAllowance = new UndoAllowance(saved.undoRemaining(), saved.undoRefillAt(), System::currentTimeMillis);
+            undoRewardWins = saved.undoRewardWins();
+            extraRewardWins = saved.extraRewardWins();
+            pendingRewardEffects = saved.pendingRewardEffects();
             refresh();
             if (saved.rewound() && !dailyMode) {
                 status.setText("Прогресс возвращён до заполнения большой дополнительной пробирки");
@@ -306,7 +321,8 @@ public final class MainActivity extends Activity {
         boolean saved = true;
         if (ordinaryEngine != null) {
             saved = persistence.save(level, ordinaryEngine, extraCooldown.availableAt(),
-                    undoAllowance.remaining(), undoAllowance.refillAt());
+                    undoAllowance.remaining(), undoAllowance.refillAt(), undoRewardWins, extraRewardWins,
+                    pendingRewardEffects);
         }
         saveFailed = !dailyPersistence.save(dailySession, dailyProgress, dailyMode) || !saved;
         if (saveFailed) {
@@ -315,6 +331,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshControls() {
+        resetUnavailableRewards();
         // Animation guards live in the click handlers so controls keep a stable appearance.
         boolean active = engine != null && !generating && !engine.state().solved();
         restart.setEnabled(active && (!dailyMode || dailySession.challenge().date().equals(LocalDate.now())));
@@ -376,6 +393,79 @@ public final class MainActivity extends Activity {
         refreshControls();
     }
 
+    private void resetUnavailableRewards() {
+        if (undoAllowance.remaining() >= UndoAllowance.LIMIT) {
+            undoRewardWins = 0;
+        }
+        if (extraCooldown.available()) {
+            extraRewardWins = 0;
+        }
+    }
+
+    private void showUndoReward() {
+        showReward(undoLabel, undoLabel.getWidth() / 2f, undoLabel.getHeight() / 2f);
+    }
+
+    private void showPendingRewardEffects() {
+        if (destroyed || dailyMode || generating || engine == null || engine.state().solved()) {
+            return;
+        }
+        int effects = pendingRewardEffects;
+        pendingRewardEffects = 0;
+        if ((effects & 1) != 0) {
+            showUndoReward();
+        }
+        if ((effects & 2) != 0) {
+            android.graphics.PointF position = board.extraRewardPosition();
+            showReward(board, position.x, position.y);
+        }
+        if (effects != 0) {
+            save();
+        }
+    }
+
+    private void showReward(android.view.View anchor, float anchorX, float anchorY) {
+        int[] labelPosition = new int[2];
+        int[] screenPosition = new int[2];
+        anchor.getLocationInWindow(labelPosition);
+        screen.getLocationInWindow(screenPosition);
+        float centerX = labelPosition[0] - screenPosition[0] + anchorX;
+        float centerY = labelPosition[1] - screenPosition[1] + anchorY;
+        android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        android.view.View sparks = new android.view.View(this) {
+            private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+            @Override protected void onDraw(android.graphics.Canvas canvas) {
+                float progress = (float) animator.getAnimatedValue();
+                paint.setStrokeWidth(dp(1));
+                paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                for (int index = 0; index < 18; index++) {
+                    double angle = index * Math.PI * 2 / 18;
+                    float distance = dp(10) + dp(26 + index % 3 * 5) * progress;
+                    float sparkX = centerX + (float) Math.cos(angle) * distance;
+                    float sparkY = centerY + (float) Math.sin(angle) * distance - dp(10) * progress;
+                    float arm = dp(3) * (1 - progress);
+                    int alpha = (int) (255 * (1 - progress));
+                    paint.setColor(Color.argb(alpha / 4, 255, 220, 130));
+                    canvas.drawCircle(sparkX, sparkY, arm * 2, paint);
+                    paint.setColor(Color.argb(alpha, 255, index % 2 == 0 ? 215 : 250, 150));
+                    canvas.drawLine(sparkX - arm, sparkY, sparkX + arm, sparkY, paint);
+                    canvas.drawLine(sparkX, sparkY - arm, sparkX, sparkY + arm, paint);
+                }
+            }
+        };
+        sparks.layout(0, 0, screen.getWidth(), screen.getHeight());
+        screen.getOverlay().add(sparks);
+        animator.setDuration(900);
+        animator.addUpdateListener(animation -> sparks.invalidate());
+        animator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                screen.getOverlay().remove(sparks);
+            }
+        });
+        animator.start();
+    }
+
     private void complete() {
         save();
         refreshControls();
@@ -423,6 +513,13 @@ public final class MainActivity extends Activity {
                                     if (destroyed || request != generationId) {
                                         return;
                                     }
+                                    // Commit rewards only when the next level is ready to replace the completed one.
+                                    if ((pendingRewardEffects & 1) != 0) {
+                                        undoAllowance.reward();
+                                    }
+                                    if ((pendingRewardEffects & 2) != 0) {
+                                        extraCooldown.reward();
+                                    }
                                     engine = new GameEngine(next);
                                     ordinaryEngine = engine;
                                     generating = false;
@@ -432,6 +529,7 @@ public final class MainActivity extends Activity {
                                         screen.removeView(victoryScreen);
                                         victoryScreen = null;
                                     }
+                                    board.postDelayed(this::showPendingRewardEffects, 180);
                                 }
                         );
                     } catch (Exception e) {

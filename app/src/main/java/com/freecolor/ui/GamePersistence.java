@@ -35,7 +35,7 @@ final class GamePersistence {
 
     // Save schema versions and state-array fields (preserve on-disk compatibility).
     private static final int MIN_SAVE_VERSION = 1;
-    private static final int SAVE_VERSION = 5;
+    private static final int SAVE_VERSION = 7;
     private static final int LEGACY_EXTRA_TUBE_VERSION = 1;
     private static final int EXTRA_COOLDOWN_VERSION = 3;
     private static final int UNDO_ALLOWANCE_VERSION = 5;
@@ -46,7 +46,8 @@ final class GamePersistence {
     private static final int LEGACY_STATE_FIELDS = 2;
 
     record Saved(long level, GameEngine engine, boolean rewound, long extraAvailableAt,
-                 int undoRemaining, long undoRefillAt) {
+                 int undoRemaining, long undoRefillAt, int undoRewardWins, int extraRewardWins,
+                 int pendingRewardEffects) {
     }
 
     private final SharedPreferences preferences;
@@ -112,13 +113,16 @@ final class GamePersistence {
         return new GameState(t, extra, a.getBoolean(STATE_HIDDEN_MODE_INDEX), known);
     }
 
-    boolean save(long level, GameEngine e, long extraAvailableAt, int undoRemaining, long undoRefillAt) {
+    boolean save(long level, GameEngine e, long extraAvailableAt, int undoRemaining, long undoRefillAt,
+                 int undoRewardWins, int extraRewardWins, int pendingRewardEffects) {
         try {
             JSONArray h = new JSONArray();
             for (GameState s : e.history()) {
                 h.put(state(s));
             }
             JSONObject o = new JSONObject().put("version", SAVE_VERSION).put("level", level).put("original", state(e.original())).put("current", state(e.state())).put("history", h).put("extraAvailableAt", extraAvailableAt).put("undoRemaining", undoRemaining).put("undoRefillAt", undoRefillAt);
+            o.put("undoRewardWins", undoRewardWins).put("extraRewardWins", extraRewardWins);
+            o.put("pendingRewardEffects", pendingRewardEffects);
             return preferences.edit().putString("save", o.toString()).commit();
         } catch (JSONException ex) {
             return false;
@@ -170,7 +174,14 @@ final class GamePersistence {
             int undoRemaining = version >= UNDO_ALLOWANCE_VERSION ? o.getInt("undoRemaining") : UndoAllowance.LIMIT;
             long undoRefillAt = version >= UNDO_ALLOWANCE_VERSION ? o.getLong("undoRefillAt") : 0;
             new UndoAllowance(undoRemaining, undoRefillAt, System::currentTimeMillis);
-            return new Saved(level, new GameEngine(original, current, h), rewound, extraAvailableAt, undoRemaining, undoRefillAt);
+            int undoRewardWins = o.optInt("undoRewardWins", 0);
+            int extraRewardWins = o.optInt("extraRewardWins", 0);
+            if (undoRewardWins < 0 || undoRewardWins >= 3 || extraRewardWins < 0 || extraRewardWins >= 5) {
+                throw new JSONException("Invalid reward progress");
+            }
+            return new Saved(level, new GameEngine(original, current, h), rewound, extraAvailableAt,
+                    undoRemaining, undoRefillAt, undoRewardWins, extraRewardWins,
+                    o.optInt("pendingRewardEffects", 0) & 3);
         } catch (Exception ex) {
             android.util.Log.e("FreeColor", "Cannot restore saved progress", ex);
             throw new IllegalStateException("Saved progress is invalid; original record retained", ex);

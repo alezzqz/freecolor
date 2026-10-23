@@ -52,6 +52,13 @@ public final class ExtraTubeCooldown {
         availableAt = clock.getAsLong() + INTERVAL_MILLIS;
     }
 
+    public void reward() {
+        if (!available()) {
+            availableAt = Math.max(clock.getAsLong(), availableAt
+                    - GameConfig.SECONDS_PER_MINUTE * GameConfig.MILLIS_PER_SECOND);
+        }
+    }
+
     public long availableAt() {
         return availableAt;
     }
