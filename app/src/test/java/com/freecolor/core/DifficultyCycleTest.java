@@ -37,6 +37,11 @@ public final class DifficultyCycleTest {
     }
 
     @Test(expected = IllegalArgumentException.class)
+    public void rejectsFewerThanFiveColors() {
+        new LevelGenerator(new Random(1)).generate(4);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
     public void rejectsInvalidLevelNumber() {
         new LevelGenerator(new Random(1)).generateForLevel(0);
     }
@@ -52,6 +57,7 @@ public final class DifficultyCycleTest {
             boolean hard = LevelGenerator.isHardLevel(level);
             int colors = initial.count() - GameConfig.EMPTY_TUBES;
             assertTrue(LevelValidator.validInitial(initial));
+            assertTrue(colors >= 5);
             if (hard) {
                 assertTrue(colors >= GameConfig.HARD_MIN_COLORS && colors <= GameConfig.MAX_COLORS);
                 hiddenHardLevel |= initial.hiddenColors;

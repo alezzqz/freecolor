@@ -176,7 +176,7 @@ public final class DailyChallengeTest {
     @Test
     public void compactShortestPathsAgreeWithIndependentProductionRuleBreadthFirstSearch() {
         for (int seed = 0; seed < 12; seed++) {
-            GameState initial = new LevelGenerator(new Random(seed)).generate(4).withHiddenColors(false);
+            GameState initial = new LevelGenerator(new Random(seed)).generate(5).withHiddenColors(false);
             DailySolver.Solution compact = new DailySolver().solve(initial);
             assertTrue(compact.solved());
             assertEquals(referenceShortest(initial), compact.moves().size());

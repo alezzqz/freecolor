@@ -122,7 +122,7 @@ public class CoreTest {
     }
     @Test public void generationAndSolutionReplay() {
         LevelGenerator g=new LevelGenerator(new Random(73929));
-        for(int n=4;n<=11;n++) {
+        for (int n = 5; n <= 11; n++) {
             for(int trial=0;trial<100;trial++) {
                 GameState a=g.generate(n);
                 assertEquals(n+2,a.count());

@@ -23,7 +23,7 @@ package com.freecolor.core;
 public final class GameConfig {
     public static final int CAPACITY = 4;
     public static final int EXTRA_CAPACITY = 1;
-    public static final int MIN_COLORS = 4;
+    public static final int MIN_COLORS = 5;
     public static final int MAX_COLORS = 11;
     public static final int EMPTY_TUBES = 2;
     public static final int MAX_TUBES = MAX_COLORS + EMPTY_TUBES + 1;
@@ -35,7 +35,7 @@ public final class GameConfig {
     public static final int GENERATION_ATTEMPTS = 40;
     public static final int FALLBACK_ATTEMPTS = 20;
     public static final int SOLVER_MATCHING_DESTINATION_BONUS = 10;
-    // Repeating five-level difficulty stages; preserve the overall 4–11 color range.
+    // Repeating five-level difficulty stages; preserve the overall 5–11 color range.
     public static final int DIFFICULTY_STAGE_LEVELS = 5;
     public static final int DIFFICULTY_CYCLE_LEVELS = DIFFICULTY_STAGE_LEVELS * 2;
     public static final int EASY_MAX_COLORS = 6;
