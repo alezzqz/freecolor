@@ -31,6 +31,10 @@ Windows: `gradlew.bat`. POSIX: `./gradlew`.
 - `app/src/test/java/com/freecolor/core` — JUnit 4 tests for the core package only.
 - `app/src/main/res` — native theme, vectors and the launcher icon.
 
+## Code recommendations
+
+- if possible we try not to create big functions and blocks of code and keep code readability and understanding
+
 ## Style — hard rules
 
 ### 1. Every control-flow body is braced. Never single-line.
@@ -163,3 +167,4 @@ together they are LGPLv3. Keep the header English, like every other code comment
    New `.java` files must carry the license header of rule 9.
 4. Behaviour did not change: formatting must not alter evaluation order, add `else` branches,
    or move statements across a `continue`/`break`/`return`.
+5. If structure of code has been changed we should keep indexing in actual state

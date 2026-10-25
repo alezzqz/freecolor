@@ -242,16 +242,30 @@ final class GameView extends View {
         return n * getResources().getDisplayMetrics().density;
     }
 
+    private record Spacing(float gapRatio, float rowGapRatio, float extraGapRatio) {}
+
+    private record ColumnLayout(int columns, float width) {}
+
     private void layoutTubes() {
         if (state == null) {
             return;
         }
-        int n = visibleTubeCount(), bestCols = MIN_COLUMNS;
+        int n = visibleTubeCount();
+        int colors = paletteSize();
+        Spacing spacing = layoutSpacing(colors, n);
+        ColumnLayout layout = bestColumnLayout(n, colors, spacing);
+        placeTubes(n, layout, spacing);
+    }
+
+    private int paletteSize() {
+        return state.count() - GameConfig.EMPTY_TUBES - (state.extra ? 1 : 0);
+    }
+
+    private static Spacing layoutSpacing(int colors, int n) {
         float gapRatio = n >= COMPACT_LAYOUT_TUBE_COUNT ? COMPACT_TUBE_GAP_RATIO : TUBE_GAP_RATIO;
         if (n >= DENSE_LAYOUT_TUBE_COUNT) {
             gapRatio = DENSE_TUBE_GAP_RATIO;
         }
-        int colors = state.count() - GameConfig.EMPTY_TUBES - (state.extra ? 1 : 0);
         boolean largePalette = colors >= LARGE_PALETTE_COLORS;
         float rowGapRatio = largePalette ? LARGE_PALETTE_ROW_GAP_RATIO : ROW_GAP_RATIO;
         if (largePalette) {
@@ -266,29 +280,43 @@ final class GameView extends View {
         } else if (colors >= VERY_LARGE_PALETTE_COLORS) {
             rowGapRatio = VERY_LARGE_PALETTE_ROW_GAP_RATIO;
         }
-        float rowWidthRatio = TUBE_HEIGHT_RATIO + rowGapRatio;
+        return new Spacing(gapRatio, rowGapRatio, extraGapRatio);
+    }
+
+    private ColumnLayout bestColumnLayout(int n, int colors, Spacing spacing) {
+        float rowWidthRatio = TUBE_HEIGHT_RATIO + spacing.rowGapRatio();
         float best = 0;
+        int bestCols = MIN_COLUMNS;
         for (int cols = MIN_COLUMNS; cols <= MAX_COLUMNS; cols++) {
             int rows = (n + cols - 1) / cols;
-            // Dense boards spend less width on gaps, including the two outer margins.
-            float widthBudget = n >= COMPACT_LAYOUT_TUBE_COUNT
-                    ? cols * TUBE_WIDTH_SCALE + (cols + 1) * gapRatio
-                    : cols * (COLUMN_WIDTH_RATIO
-                            + (colors <= SMALL_PALETTE_MAX_COLORS ? extraGapRatio : 0));
-            float w = Math.min(dp(MAX_TUBE_WIDTH_DP), Math.min(getWidth() / widthBudget,
+            float w = Math.min(dp(MAX_TUBE_WIDTH_DP), Math.min(getWidth() / widthBudget(cols, n, colors, spacing),
                     (getHeight() - dp(BOARD_VERTICAL_RESERVE_DP)) / (rows * rowWidthRatio)));
             if (w > best) {
                 best = w;
                 bestCols = cols;
             }
         }
+        return new ColumnLayout(bestCols, best);
+    }
+
+    private static float widthBudget(int cols, int n, int colors, Spacing spacing) {
+        // Dense boards spend less width on gaps, including the two outer margins.
+        if (n >= COMPACT_LAYOUT_TUBE_COUNT) {
+            return cols * TUBE_WIDTH_SCALE + (cols + 1) * spacing.gapRatio();
+        }
+        return cols * (COLUMN_WIDTH_RATIO + (colors <= SMALL_PALETTE_MAX_COLORS ? spacing.extraGapRatio() : 0));
+    }
+
+    private void placeTubes(int n, ColumnLayout layout, Spacing spacing) {
         // Widen the glass independently of the original height and spacing budget.
-        float w = best * TUBE_WIDTH_SCALE, h = best * TUBE_HEIGHT_RATIO;
-        float gap = best * gapRatio, rowH = h + best * rowGapRatio;
+        float w = layout.width() * TUBE_WIDTH_SCALE;
+        float h = layout.width() * TUBE_HEIGHT_RATIO;
+        float gap = layout.width() * spacing.gapRatio();
+        float rowH = h + layout.width() * spacing.rowGapRatio();
         // Keep a raised tube clear of the row above even when the board is tightly packed.
-        selectionRowClearance = Math.max(0, best * rowGapRatio - dp(SELECTION_TOP_CLEARANCE_DP));
-        int rows = (n + bestCols - 1) / bestCols;
-        float top = (getHeight() - rows * rowH) / 2 + best * BOARD_TOP_OFFSET_RATIO;
+        selectionRowClearance = Math.max(0, layout.width() * spacing.rowGapRatio() - dp(SELECTION_TOP_CLEARANCE_DP));
+        int rows = (n + layout.columns() - 1) / layout.columns();
+        float top = (getHeight() - rows * rowH) / 2 + layout.width() * BOARD_TOP_OFFSET_RATIO;
         boxes = new RectF[n];
         if (selectionOffsets.length != n) {
             selectionOffsets = new float[n];
@@ -297,8 +325,9 @@ final class GameView extends View {
             completionStarted = new long[n];
         }
         for (int i = 0; i < n; i++) {
-            int row = i / bestCols, k = Math.min(bestCols, n - row * bestCols);
-            float x = (getWidth() - (k * w + (k - 1) * gap)) / 2 + (i % bestCols) * (w + gap);
+            int row = i / layout.columns();
+            int k = Math.min(layout.columns(), n - row * layout.columns());
+            float x = (getWidth() - (k * w + (k - 1) * gap)) / 2 + (i % layout.columns()) * (w + gap);
             boxes[i] = new RectF(x, top + row * rowH, x + w, top + row * rowH + h);
         }
     }
@@ -329,6 +358,14 @@ final class GameView extends View {
         if (boxes.length != visibleTubeCount()) {
             layoutTubes();
         }
+        drawBoard(c);
+        if (busy) {
+            drawPourAnimation(c);
+        }
+        drawCompletionEffects(c);
+    }
+
+    private void drawBoard(Canvas c) {
         for (int i = 0; i < boxes.length; i++) {
             if (i == state.count()) {
                 drawLockedExtra(c, boxes[i]);
@@ -345,41 +382,59 @@ final class GameView extends View {
             }
             drawTube(c, b, units, currentVisibility[i], level, i == selected, state.capacity(i));
         }
-        if (busy) {
-            RectF src = boxes[moving.source()], dst = boxes[moving.destination()];
+    }
 
-            float travel = Math.min(1, progress / POUR_APPROACH_END) * Math.min(1, (1 - progress) / POUR_RETURN_DURATION);
-            float fill = before.size(moving.source()) - pourAmount * transfer();
-            int sourceCapacity = before.capacity(moving.source());
-            float pourAngle = pourAngle(src, fill, sourceCapacity);
-            double fullAngle = Math.toRadians(pourAngle);
-            float rimOffset = src.width() * (.5f - GLASS_INSET_RATIO) + dp(RIM_OVERHANG_DP);
-            float lipOffset = rimOffset * (float) Math.cos(fullAngle)
-                    + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(fullAngle);
-            float x = src.left + (dst.centerX() - src.centerX() - lipOffset) * travel;
-            float remainingLift = pourStartLift * (1 - Math.min(1, progress / POUR_APPROACH_END));
-            float y = src.top + (dst.top - src.height() * POUR_LIFT_HEIGHT_RATIO - src.top) * travel - remainingLift;
-            RectF b = pourBounds;
-            b.set(x, y, x + src.width(), y + src.height());
-            c.save();
-            c.rotate(pourAngle * travel, b.centerX(), b.top + src.width() * POUR_PIVOT_RATIO);
-            drawTube(c, b, previousUnits[moving.source()], previousVisibility[moving.source()], fill, true, sourceCapacity, pourAngle * travel);
-            c.restore();
-            if (progress > POUR_APPROACH_END && progress < POUR_STREAM_END) {
-                paint.setColor(COLORS[before.top(moving.source())]);
-                paint.setStrokeWidth(dp(POUR_STREAM_WIDTH_DP));
-                int capacity = state.capacity(moving.destination());
-                float surface = dst.bottom - liquidFillHeight(dst,
-                        before.size(moving.destination()) + pourAmount * transfer(), capacity);
-                double angle = Math.toRadians(pourAngle * travel);
-                float lipX = b.centerX() + rimOffset * (float) Math.cos(angle)
-                        + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(angle);
-                float lipY = b.top + rimOffset * (float) Math.sin(angle)
-                        + src.width() * POUR_PIVOT_RATIO * (1 - (float) Math.cos(angle));
-                c.drawLine(lipX, lipY, dst.centerX(), surface, paint);
-            }
+    private void drawPourAnimation(Canvas c) {
+        RectF src = boxes[moving.source()], dst = boxes[moving.destination()];
+        float travel = pourTravel();
+        float fill = before.size(moving.source()) - pourAmount * transfer();
+        int sourceCapacity = before.capacity(moving.source());
+        float angle = pourAngle(src, fill, sourceCapacity);
+        float rimOffset = src.width() * (.5f - GLASS_INSET_RATIO) + dp(RIM_OVERHANG_DP);
+
+        RectF tube = pourTubeBounds(src, dst, angle, travel, rimOffset);
+        drawPouringTube(c, tube, fill, sourceCapacity, angle, travel);
+        drawPourStream(c, dst, tube, angle, travel, rimOffset);
+    }
+
+    private float pourTravel() {
+        // Horizontal travel ramps up during approach and back down during the return.
+        return Math.min(1, progress / POUR_APPROACH_END) * Math.min(1, (1 - progress) / POUR_RETURN_DURATION);
+    }
+
+    private RectF pourTubeBounds(RectF src, RectF dst, float angle, float travel, float rimOffset) {
+        double fullAngle = Math.toRadians(angle);
+        float lipOffset = rimOffset * (float) Math.cos(fullAngle)
+                + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(fullAngle);
+        float x = src.left + (dst.centerX() - src.centerX() - lipOffset) * travel;
+        float remainingLift = pourStartLift * (1 - Math.min(1, progress / POUR_APPROACH_END));
+        float y = src.top + (dst.top - src.height() * POUR_LIFT_HEIGHT_RATIO - src.top) * travel - remainingLift;
+        RectF b = pourBounds;
+        b.set(x, y, x + src.width(), y + src.height());
+        return b;
+    }
+
+    private void drawPouringTube(Canvas c, RectF tube, float fill, int sourceCapacity, float angle, float travel) {
+        c.save();
+        c.rotate(angle * travel, tube.centerX(), tube.top + tube.width() * POUR_PIVOT_RATIO);
+        drawTube(c, tube, previousUnits[moving.source()], previousVisibility[moving.source()], fill, true, sourceCapacity, angle * travel);
+        c.restore();
+    }
+
+    private void drawPourStream(Canvas c, RectF dst, RectF tube, float angle, float travel, float rimOffset) {
+        if (progress > POUR_APPROACH_END && progress < POUR_STREAM_END) {
+            paint.setColor(COLORS[before.top(moving.source())]);
+            paint.setStrokeWidth(dp(POUR_STREAM_WIDTH_DP));
+            int capacity = state.capacity(moving.destination());
+            float surface = dst.bottom - liquidFillHeight(dst,
+                    before.size(moving.destination()) + pourAmount * transfer(), capacity);
+            double currentAngle = Math.toRadians(angle * travel);
+            float lipX = tube.centerX() + rimOffset * (float) Math.cos(currentAngle)
+                    + tube.width() * POUR_PIVOT_RATIO * (float) Math.sin(currentAngle);
+            float lipY = tube.top + rimOffset * (float) Math.sin(currentAngle)
+                    + tube.width() * POUR_PIVOT_RATIO * (1 - (float) Math.cos(currentAngle));
+            c.drawLine(lipX, lipY, dst.centerX(), surface, paint);
         }
-        drawCompletionEffects(c);
     }
 
     void setExtraWaitMillis(long remaining) {
@@ -400,56 +455,63 @@ final class GameView extends View {
                 continue;
             }
             active = true;
-            RectF bounds = displayedBox(i);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setStrokeWidth(dp(SPARK_STROKE_DP));
-            for (int spark = 0; spark < COMPLETION_SPARK_COUNT; spark++) {
-                // Fixed seeds make trajectories stable across frames and avoid particle allocations.
-                float seed = (spark * SPARK_SEED_MULTIPLIER % SPARK_SEED_MODULUS)
-                        / (float) SPARK_SEED_MODULUS;
-                float age = (fraction - seed * SPARK_DELAY_FRACTION) / (1 - SPARK_DELAY_FRACTION);
-                if (age <= 0 || age >= 1) {
-                    continue;
-                }
-                double angle = spark * Math.PI * 2 / COMPLETION_SPARK_COUNT;
-                float directionX = (float) Math.cos(angle);
-                float directionY = (float) Math.sin(angle);
-                float distance = dp(SPARK_TRAVEL_MIN_DP + seed * SPARK_TRAVEL_VARIATION_DP);
-                float x = bounds.centerX() + directionX
-                        * (bounds.width() * SPARK_ORIGIN_WIDTH_RATIO + distance * age);
-                float y = bounds.centerY() + directionY
-                        * (bounds.height() * SPARK_ORIGIN_HEIGHT_RATIO
-                        + distance * SPARK_VERTICAL_TRAVEL_RATIO * age)
-                        - dp(SPARK_RISE_DP) * age + dp(SPARK_GRAVITY_DP) * age * age;
-                float fade = Math.min(1, age / SPARK_FADE_IN_FRACTION) * (1 - age) * (1 - age);
-                float twinkle = SPARK_TWINKLE_BASE + SPARK_TWINKLE_DEPTH
-                        * (float) Math.sin((age * SPARK_TWINKLE_CYCLES + seed) * Math.PI * 2);
-                int alpha = (int) (COLOR_CHANNEL_MAX * fade * twinkle);
-                int green = spark % 2 == 0 ? SPARK_GOLD_GREEN : COLOR_CHANNEL_MAX;
-                int blue = spark % 2 == 0 ? SPARK_GOLD_BLUE : SPARK_LIGHT_BLUE;
-                float arm = dp(SPARK_ARM_DP) * (1 - age)
-                        * (1 + seed * SPARK_SIZE_VARIATION_RATIO);
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.argb((int) (alpha * SPARK_GLOW_ALPHA_RATIO),
-                        COLOR_CHANNEL_MAX, green, blue));
-                canvas.drawCircle(x, y, arm * SPARK_GLOW_SIZE_RATIO, paint);
-                paint.setColor(Color.argb(alpha, COLOR_CHANNEL_MAX, green, blue));
-                if (spark % SPARK_STAR_INTERVAL == 0) {
-                    canvas.save();
-                    canvas.rotate(seed * SPARK_ROTATION_DEGREES + age * SPARK_ROTATION_DEGREES, x, y);
-                    canvas.drawLine(x - arm, y, x + arm, y, paint);
-                    canvas.drawLine(x, y - arm * SPARK_SHORT_ARM_RATIO,
-                            x, y + arm * SPARK_SHORT_ARM_RATIO, paint);
-                    canvas.restore();
-                } else {
-                    canvas.drawCircle(x, y, arm * SPARK_SHORT_ARM_RATIO, paint);
-                }
-            }
-            paint.setStrokeCap(Paint.Cap.BUTT);
-            paint.setStyle(Paint.Style.FILL);
+            drawCompletionSparks(canvas, displayedBox(i), fraction);
         }
         if (active) {
             postInvalidateOnAnimation();
+        }
+    }
+
+    private void drawCompletionSparks(Canvas canvas, RectF bounds, float fraction) {
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(dp(SPARK_STROKE_DP));
+        for (int spark = 0; spark < COMPLETION_SPARK_COUNT; spark++) {
+            drawSpark(canvas, bounds, spark, fraction);
+        }
+        paint.setStrokeCap(Paint.Cap.BUTT);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawSpark(Canvas canvas, RectF bounds, int spark, float fraction) {
+        // Fixed seeds make trajectories stable across frames and avoid particle allocations.
+        float seed = (spark * SPARK_SEED_MULTIPLIER % SPARK_SEED_MODULUS)
+                / (float) SPARK_SEED_MODULUS;
+        float age = (fraction - seed * SPARK_DELAY_FRACTION) / (1 - SPARK_DELAY_FRACTION);
+        if (age <= 0 || age >= 1) {
+            return;
+        }
+        double angle = spark * Math.PI * 2 / COMPLETION_SPARK_COUNT;
+        float directionX = (float) Math.cos(angle);
+        float directionY = (float) Math.sin(angle);
+        float distance = dp(SPARK_TRAVEL_MIN_DP + seed * SPARK_TRAVEL_VARIATION_DP);
+        float x = bounds.centerX() + directionX
+                * (bounds.width() * SPARK_ORIGIN_WIDTH_RATIO + distance * age);
+        float y = bounds.centerY() + directionY
+                * (bounds.height() * SPARK_ORIGIN_HEIGHT_RATIO
+                + distance * SPARK_VERTICAL_TRAVEL_RATIO * age)
+                - dp(SPARK_RISE_DP) * age + dp(SPARK_GRAVITY_DP) * age * age;
+        float fade = Math.min(1, age / SPARK_FADE_IN_FRACTION) * (1 - age) * (1 - age);
+        float twinkle = SPARK_TWINKLE_BASE + SPARK_TWINKLE_DEPTH
+                * (float) Math.sin((age * SPARK_TWINKLE_CYCLES + seed) * Math.PI * 2);
+        int alpha = (int) (COLOR_CHANNEL_MAX * fade * twinkle);
+        int green = spark % 2 == 0 ? SPARK_GOLD_GREEN : COLOR_CHANNEL_MAX;
+        int blue = spark % 2 == 0 ? SPARK_GOLD_BLUE : SPARK_LIGHT_BLUE;
+        float arm = dp(SPARK_ARM_DP) * (1 - age)
+                * (1 + seed * SPARK_SIZE_VARIATION_RATIO);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb((int) (alpha * SPARK_GLOW_ALPHA_RATIO),
+                COLOR_CHANNEL_MAX, green, blue));
+        canvas.drawCircle(x, y, arm * SPARK_GLOW_SIZE_RATIO, paint);
+        paint.setColor(Color.argb(alpha, COLOR_CHANNEL_MAX, green, blue));
+        if (spark % SPARK_STAR_INTERVAL == 0) {
+            canvas.save();
+            canvas.rotate(seed * SPARK_ROTATION_DEGREES + age * SPARK_ROTATION_DEGREES, x, y);
+            canvas.drawLine(x - arm, y, x + arm, y, paint);
+            canvas.drawLine(x, y - arm * SPARK_SHORT_ARM_RATIO,
+                    x, y + arm * SPARK_SHORT_ARM_RATIO, paint);
+            canvas.restore();
+        } else {
+            canvas.drawCircle(x, y, arm * SPARK_SHORT_ARM_RATIO, paint);
         }
     }
 
@@ -511,17 +573,18 @@ final class GameView extends View {
 
     private void drawTube(Canvas c, RectF b, int[] units, boolean[] revealed, float fill,
             boolean highlight, int capacity, float angle) {
-        float inset = b.width() * GLASS_INSET_RATIO, bottom = b.bottom, liquidHeight = liquidHeight(b, capacity);
-        float rimOverhang = dp(RIM_OVERHANG_DP), rimHalfHeight = dp(RIM_HALF_HEIGHT_DP);
-        float innerWidth = b.width() - inset * 2;
-        float depth = rimHalfHeight * innerWidth / (innerWidth + rimOverhang * 2);
+        drawLiquidContents(c, b, units, revealed, fill, capacity, angle);
+        drawGlassOutline(c, b, capacity, highlight);
+        drawGlassReflection(c, b, capacity);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawLiquidContents(Canvas c, RectF b, int[] units, boolean[] revealed,
+            float fill, int capacity, float angle) {
+        float inset = b.width() * GLASS_INSET_RATIO;
         Path glass = glassPath;
         glass.reset();
-        glass.moveTo(b.left + inset, b.top);
-        glass.lineTo(b.left + inset, b.bottom - b.width() * GLASS_BOTTOM_CURVE_RATIO);
-        glass.quadTo(b.left + inset, b.bottom, b.centerX(), b.bottom);
-        glass.quadTo(b.right - inset, b.bottom, b.right - inset, b.bottom - b.width() * GLASS_BOTTOM_CURVE_RATIO);
-        glass.lineTo(b.right - inset, b.top);
+        buildGlassContour(glass, b, inset);
         glass.close();
         c.save();
         c.clipPath(glass);
@@ -531,76 +594,96 @@ final class GameView extends View {
         if (angle > .01f) {
             drawTiltedLiquid(c, b, units, revealed, fill, capacity, angle);
         } else {
-            // Matching units form one cylinder. Internal interfaces share curved
-            // contours; only the exposed surface gets a lit elliptical cap.
-            paint.setAntiAlias(true);
-            for (int start = 0; start < units.length && start < fill; ) {
-                int end = start + 1;
-                while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
-                    end++;
-                }
-                float visibleEnd = Math.min(fill, end);
-                paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
-                float top = Math.round(bottom - liquidFillHeight(b, visibleEnd, capacity));
-                // Extend the lowest fill past the contour; the glass clip trims it exactly
-                // to the rounded bottom, including fractional pixels during animation.
-                float base = start == 0 ? (float) Math.ceil(bottom) + LIQUID_BOTTOM_OVERSCAN_PX
-                        : Math.round(bottom - liquidFillHeight(b, start, capacity));
-                float left = b.left + inset, right = b.right - inset;
-                boolean surface = visibleEnd >= fill;
-                Path liquid = liquidPath;
-                liquid.reset();
-                liquid.moveTo(left, surface ? top + depth : top);
-                if (surface) {
-                    liquid.lineTo(right, top + depth);
-                } else {
-                    liquid.quadTo(b.centerX(), top + depth * 2, right, top);
-                }
-                liquid.lineTo(right, base);
-                if (start == 0) {
-                    liquid.lineTo(left, base);
-                } else {
-                    liquid.quadTo(b.centerX(), base + depth * 2, left, base);
-                }
-                liquid.close();
-                surfaceBounds.set(left, top, right, top + depth * 2);
-                if (surface) {
-                    liquid.addOval(surfaceBounds, Path.Direction.CW);
-                }
-                if (revealed[start]) {
-                    int color = COLORS[units[start]];
-                    paint.setShader(liquidShader(units[start], left, right));
-                    c.drawPath(liquid, paint);
-                    paint.setShader(null);
-                    if (surface) {
-                        paint.setColor(shade(color, LIQUID_SURFACE_SHADE));
-                        c.drawOval(surfaceBounds, paint);
-                    }
-                } else {
-                    c.drawPath(liquid, paint);
-                }
-                if (!revealed[start]) {
-                    hiddenTextPaint.setColor(HIDDEN_LABEL);
-                    hiddenTextPaint.setTextSize(liquidHeight / capacity * HIDDEN_LABEL_HEIGHT_RATIO);
-                    hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
-                    float centerY = (top + base) / 2f;
-                    c.drawText("?", b.centerX(), centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2f, hiddenTextPaint);
-                }
-                start = end;
-            }
+            drawUprightLiquid(c, b, units, revealed, fill, capacity);
         }
         paint.setAntiAlias(true);
         c.restore();
+    }
+
+    private void drawUprightLiquid(Canvas c, RectF b, int[] units, boolean[] revealed,
+            float fill, int capacity) {
+        // Matching units form one cylinder. Internal interfaces share curved
+        // contours; only the exposed surface gets a lit elliptical cap.
+        paint.setAntiAlias(true);
+        for (int start = 0; start < units.length && start < fill; ) {
+            int end = runEnd(units, revealed, start);
+            drawUprightBand(c, b, units, revealed, fill, capacity, start, end);
+            start = end;
+        }
+    }
+
+    private void drawUprightBand(Canvas c, RectF b, int[] units, boolean[] revealed,
+            float fill, int capacity, int start, int end) {
+        float inset = b.width() * GLASS_INSET_RATIO;
+        float bottom = b.bottom;
+        float depth = liquidDepth(b, inset);
+        float visibleEnd = Math.min(fill, end);
+        paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
+        float top = Math.round(bottom - liquidFillHeight(b, visibleEnd, capacity));
+        // Extend the lowest fill past the contour; the glass clip trims it exactly
+        // to the rounded bottom, including fractional pixels during animation.
+        float base = start == 0 ? (float) Math.ceil(bottom) + LIQUID_BOTTOM_OVERSCAN_PX
+                : Math.round(bottom - liquidFillHeight(b, start, capacity));
+        float left = b.left + inset, right = b.right - inset;
+        boolean surface = visibleEnd >= fill;
+        Path liquid = buildUprightBandPath(b, left, right, top, base, depth, surface, start == 0);
+        if (revealed[start]) {
+            int color = COLORS[units[start]];
+            paint.setShader(liquidShader(units[start], left, right));
+            c.drawPath(liquid, paint);
+            paint.setShader(null);
+            if (surface) {
+                paint.setColor(shade(color, LIQUID_SURFACE_SHADE));
+                c.drawOval(surfaceBounds, paint);
+            }
+        } else {
+            c.drawPath(liquid, paint);
+            drawHiddenLabel(c, b.centerX(), (top + base) / 2f,
+                    liquidHeight(b, capacity) / capacity * HIDDEN_LABEL_HEIGHT_RATIO);
+        }
+    }
+
+    private Path buildUprightBandPath(RectF b, float left, float right, float top, float base,
+            float depth, boolean surface, boolean lowest) {
+        Path liquid = liquidPath;
+        liquid.reset();
+        liquid.moveTo(left, surface ? top + depth : top);
+        if (surface) {
+            liquid.lineTo(right, top + depth);
+        } else {
+            liquid.quadTo(b.centerX(), top + depth * 2, right, top);
+        }
+        liquid.lineTo(right, base);
+        if (lowest) {
+            liquid.lineTo(left, base);
+        } else {
+            liquid.quadTo(b.centerX(), base + depth * 2, left, base);
+        }
+        liquid.close();
+        surfaceBounds.set(left, top, right, top + depth * 2);
+        if (surface) {
+            liquid.addOval(surfaceBounds, Path.Direction.CW);
+        }
+        return liquid;
+    }
+
+    private float liquidDepth(RectF b, float inset) {
+        float rimOverhang = dp(RIM_OVERHANG_DP);
+        float rimHalfHeight = dp(RIM_HALF_HEIGHT_DP);
+        float innerWidth = b.width() - inset * 2;
+        return rimHalfHeight * innerWidth / (innerWidth + rimOverhang * 2);
+    }
+
+    private void drawGlassOutline(Canvas c, RectF b, int capacity, boolean highlight) {
+        float inset = b.width() * GLASS_INSET_RATIO;
+        float rimOverhang = dp(RIM_OVERHANG_DP);
+        float rimHalfHeight = dp(RIM_HALF_HEIGHT_DP);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(highlight ? SELECTED_GLASS_STROKE_DP : GLASS_STROKE_DP));
         paint.setColor(capacity == GameConfig.EXTRA_CAPACITY ? EXTRA_UPPER_OUTLINE : highlight ? SELECTED_OUTLINE : GLASS_OUTLINE);
         Path outline = outlinePath;
         outline.reset();
-        outline.moveTo(b.left + inset, b.top);
-        outline.lineTo(b.left + inset, b.bottom - b.width() * GLASS_BOTTOM_CURVE_RATIO);
-        outline.quadTo(b.left + inset, b.bottom, b.centerX(), b.bottom);
-        outline.quadTo(b.right - inset, b.bottom, b.right - inset, b.bottom - b.width() * GLASS_BOTTOM_CURVE_RATIO);
-        outline.lineTo(b.right - inset, b.top);
+        buildGlassContour(outline, b, inset);
         c.drawPath(outline, paint);
         surfaceBounds.set(b.left + inset - rimOverhang, b.top - rimHalfHeight,
                 b.right - inset + rimOverhang, b.top + rimHalfHeight);
@@ -617,6 +700,9 @@ final class GameView extends View {
                     b.right - inset + rimOverhang, divider + rimHalfHeight);
             c.drawOval(surfaceBounds, paint);
         }
+    }
+
+    private void drawGlassReflection(Canvas c, RectF b, int capacity) {
         paint.setColor(capacity == GameConfig.EXTRA_CAPACITY ? EXTRA_UPPER_REFLECTION : GLASS_REFLECTION);
         paint.setStrokeWidth(dp(GLASS_STROKE_DP));
         c.drawLine(b.left + b.width() * REFLECTION_X_RATIO, b.top + dp(REFLECTION_TOP_OFFSET_DP), b.left + b.width() * REFLECTION_X_RATIO, b.bottom - b.width() * REFLECTION_BOTTOM_OFFSET_RATIO, paint);
@@ -625,7 +711,15 @@ final class GameView extends View {
             c.drawLine(b.left + b.width() * REFLECTION_X_RATIO, extraCompartmentTop(b) + dp(EXTRA_REFLECTION_TOP_OFFSET_DP),
                     b.left + b.width() * REFLECTION_X_RATIO, b.bottom - b.width() * REFLECTION_BOTTOM_OFFSET_RATIO, paint);
         }
-        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private static void buildGlassContour(Path path, RectF b, float inset) {
+        float bottomCurve = b.width() * GLASS_BOTTOM_CURVE_RATIO;
+        path.moveTo(b.left + inset, b.top);
+        path.lineTo(b.left + inset, b.bottom - bottomCurve);
+        path.quadTo(b.left + inset, b.bottom, b.centerX(), b.bottom);
+        path.quadTo(b.right - inset, b.bottom, b.right - inset, b.bottom - bottomCurve);
+        path.lineTo(b.right - inset, b.top);
     }
 
     private void drawTiltedLiquid(Canvas canvas, RectF bounds, int[] units, boolean[] revealed,
@@ -637,43 +731,60 @@ final class GameView extends View {
         canvas.rotate(-angle, bounds.centerX(), bounds.bottom);
         float base = 0;
         for (int start = 0; start < units.length && start < fill; ) {
-            int end = start + 1;
-            while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
-                end++;
-            }
-            tiltedLiquid.rotate(0);
-            double area = tiltedLiquid.areaBelow(-liquidFillHeight(bounds, Math.min(fill, end), capacity));
-            tiltedLiquid.rotate(angle);
-            float top = tiltedLiquid.surfaceForArea(area);
-            if (start == 0) {
-                base = tiltedLiquid.bottom() + 1;
-            }
-            float left = bounds.centerX() + tiltedLiquid.left() - 1;
-            float right = bounds.centerX() + tiltedLiquid.right() + 1;
-            paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
-            if (revealed[start]) {
-                paint.setShader(liquidShader(units[start], left, right));
-            }
-            canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + base, paint);
-            paint.setShader(null);
-            if (revealed[start] && end >= fill) {
-                paint.setColor(shade(COLORS[units[start]], LIQUID_SURFACE_SHADE));
-                canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + Math.min(base, top + dp(1)), paint);
-            }
-            if (!revealed[start]) {
-                float centerY = (top + base) / 2;
-                hiddenTextPaint.setColor(HIDDEN_LABEL);
-                hiddenTextPaint.setTextSize(Math.min(liquidHeight(bounds, capacity) / capacity
-                        * HIDDEN_LABEL_HEIGHT_RATIO, (base - top) * .8f));
-                hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
-                canvas.drawText("?", bounds.centerX() + tiltedLiquid.centerXAt(centerY),
-                        bounds.bottom + centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2,
-                        hiddenTextPaint);
-            }
-            base = top;
+            int end = runEnd(units, revealed, start);
+            base = drawTiltedBand(canvas, bounds, units, revealed, fill, capacity, angle, start, end, base);
             start = end;
         }
         canvas.restore();
+    }
+
+    private float drawTiltedBand(Canvas canvas, RectF bounds, int[] units, boolean[] revealed,
+            float fill, int capacity, float angle, int start, int end, float base) {
+        float top = bandSurface(bounds, fill, capacity, angle, end);
+        if (start == 0) {
+            base = tiltedLiquid.bottom() + 1;
+        }
+        float left = bounds.centerX() + tiltedLiquid.left() - 1;
+        float right = bounds.centerX() + tiltedLiquid.right() + 1;
+        paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
+        if (revealed[start]) {
+            paint.setShader(liquidShader(units[start], left, right));
+        }
+        canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + base, paint);
+        paint.setShader(null);
+        if (revealed[start] && end >= fill) {
+            paint.setColor(shade(COLORS[units[start]], LIQUID_SURFACE_SHADE));
+            canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + Math.min(base, top + dp(1)), paint);
+        }
+        if (!revealed[start]) {
+            float centerY = (top + base) / 2;
+            drawHiddenLabel(canvas, bounds.centerX() + tiltedLiquid.centerXAt(centerY),
+                    bounds.bottom + centerY,
+                    Math.min(liquidHeight(bounds, capacity) / capacity * HIDDEN_LABEL_HEIGHT_RATIO, (base - top) * .8f));
+        }
+        return top;
+    }
+
+    private float bandSurface(RectF bounds, float fill, int capacity, float angle, int end) {
+        tiltedLiquid.rotate(0);
+        double area = tiltedLiquid.areaBelow(-liquidFillHeight(bounds, Math.min(fill, end), capacity));
+        tiltedLiquid.rotate(angle);
+        return tiltedLiquid.surfaceForArea(area);
+    }
+
+    private static int runEnd(int[] units, boolean[] revealed, int start) {
+        int end = start + 1;
+        while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
+            end++;
+        }
+        return end;
+    }
+
+    private void drawHiddenLabel(Canvas canvas, float centerX, float centerY, float textSize) {
+        hiddenTextPaint.setColor(HIDDEN_LABEL);
+        hiddenTextPaint.setTextSize(textSize);
+        hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
+        canvas.drawText("?", centerX, centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2f, hiddenTextPaint);
     }
 
     private static int shade(int color, float factor) {
@@ -783,32 +894,41 @@ final class GameView extends View {
             return true;
         }
         for (int i = 0; i < boxes.length; i++) {
-            RectF touch = displayedBox(i);
-            touch.union(boxes[i]);
-            touch.inset(-dp(TOUCH_HORIZONTAL_EXPANSION_DP), -dp(TOUCH_VERTICAL_EXPANSION_DP));
-            if (i == boxes.length - 1 && touch.height() < dp(MIN_TOUCH_HEIGHT_DP)) {
-                float expand = (dp(MIN_TOUCH_HEIGHT_DP) - touch.height()) / 2;
-                touch.inset(0, -expand);
-            }
+            RectF touch = touchBounds(i);
             if (touch.contains(e.getX(), e.getY())) {
-                if (i == state.count()) {
-                    selectTube(NO_SELECTION);
-                    if (extraWaitMillis == 0) {
-                        listener.unlockExtra();
-                    }
-                } else if (selected == i) {
-                    selectTube(NO_SELECTION);
-                } else if (selected >= 0 && Rules.amount(state, new Move(selected, i)) > 0) {
-                    listener.pour(new Move(selected, i));
-                    selectTube(NO_SELECTION);
-                } else {
-                    selectTube(state.size(i) > 0 ? i : NO_SELECTION);
-                }
+                handleTubeTap(i);
                 invalidate();
                 break;
             }
         }
         return true;
+    }
+
+    private RectF touchBounds(int index) {
+        RectF touch = displayedBox(index);
+        touch.union(boxes[index]);
+        touch.inset(-dp(TOUCH_HORIZONTAL_EXPANSION_DP), -dp(TOUCH_VERTICAL_EXPANSION_DP));
+        if (index == boxes.length - 1 && touch.height() < dp(MIN_TOUCH_HEIGHT_DP)) {
+            float expand = (dp(MIN_TOUCH_HEIGHT_DP) - touch.height()) / 2;
+            touch.inset(0, -expand);
+        }
+        return touch;
+    }
+
+    private void handleTubeTap(int index) {
+        if (index == state.count()) {
+            selectTube(NO_SELECTION);
+            if (extraWaitMillis == 0) {
+                listener.unlockExtra();
+            }
+        } else if (selected == index) {
+            selectTube(NO_SELECTION);
+        } else if (selected >= 0 && Rules.amount(state, new Move(selected, index)) > 0) {
+            listener.pour(new Move(selected, index));
+            selectTube(NO_SELECTION);
+        } else {
+            selectTube(state.size(index) > 0 ? index : NO_SELECTION);
+        }
     }
 
     @Override
