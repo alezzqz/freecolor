@@ -39,8 +39,12 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import android.app.AlertDialog;
+
+import androidx.annotation.NonNull;
+
 import java.util.concurrent.*;
 
+@SuppressLint("SetTextI18n")
 public final class MainActivity extends Activity {
 
     // Screen layout (dp) and typography (sp).
@@ -114,140 +118,197 @@ public final class MainActivity extends Activity {
         }
     };
 
-    @SuppressLint("SetTextI18n")
     @Override
     public void onCreate(Bundle b) {
         super.onCreate(b);
         persistence = new GamePersistence(this);
         dailyPersistence = new DailyPersistence(this);
+        buildUi();
+        board.listener = listener();
+        restoreState();
+    }
+
+    private void buildUi() {
+        title = createTitle();
+        status = createStatus();
+        board = new GameView(this);
+        LinearLayout controls = createControls();
+        modeCard = createModeCard();
+        dailyInfo = createDailyInfo();
+        todayButton = createTodayButton();
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP), dp(SCREEN_PADDING_DP));
         root.setBackgroundColor(SCREEN_BACKGROUND);
-        title = new TextView(this);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(LEVEL_TEXT_SP);
-        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        title.setGravity(Gravity.CENTER);
-        title.setBackgroundResource(R.drawable.level_ribbon);
-        status = new TextView(this);
-        status.setTextColor(STATUS_TEXT_COLOR);
-        status.setTextSize(STATUS_TEXT_SP);
-        status.setGravity(Gravity.CENTER);
-        board = new GameView(this);
+
+        LinearLayout.LayoutParams ribbonParams = new LinearLayout.LayoutParams(dp(LEVEL_RIBBON_WIDTH_DP), dp(LEVEL_RIBBON_HEIGHT_DP));
+        ribbonParams.gravity = Gravity.CENTER_HORIZONTAL;
+        ribbonParams.topMargin = dp(LEVEL_RIBBON_TOP_MARGIN_DP);
+        ribbonParams.bottomMargin = dp(LEVEL_RIBBON_BOTTOM_MARGIN_DP);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
+        statusParams.gravity = Gravity.CENTER_HORIZONTAL;
+        statusParams.topMargin = dp(10);
+        LinearLayout.LayoutParams todayParams = new LinearLayout.LayoutParams(MATCH_PARENT, dp(48));
+        todayParams.bottomMargin = dp(8);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT);
+        cardParams.topMargin = dp(16);
+
+        root.addView(controls, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+        root.addView(title, ribbonParams);
+        root.addView(dailyInfo, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
+        root.addView(status, statusParams);
+        root.addView(board, new LinearLayout.LayoutParams(MATCH_PARENT, 0, 1));
+        root.addView(todayButton, todayParams);
+        root.addView(modeCard, cardParams);
+
+        screen = new FrameLayout(this);
+        screen.addView(root, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
+        setContentView(screen);
+    }
+
+    private TextView createTitle() {
+        TextView view = new TextView(this);
+        view.setTextColor(Color.WHITE);
+        view.setTextSize(LEVEL_TEXT_SP);
+        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        view.setGravity(Gravity.CENTER);
+        view.setBackgroundResource(R.drawable.level_ribbon);
+        return view;
+    }
+
+    private TextView createStatus() {
+        TextView view = new TextView(this);
+        view.setTextColor(STATUS_TEXT_COLOR);
+        view.setTextSize(STATUS_TEXT_SP);
+        view.setGravity(Gravity.CENTER);
+        return view;
+    }
+
+    private LinearLayout createControls() {
         LinearLayout controls = new LinearLayout(this);
         controls.setGravity(Gravity.CENTER);
         restart = button("Заново", R.drawable.ic_restart, controls, () -> {
-                    if (dailyMode) {
-                        restartDaily();
-                    } else {
-                        engine.restart();
-                        save();
-                        refresh();
-                    }
-                }
-        );
+            if (dailyMode) {
+                restartDaily();
+            } else {
+                engine.restart();
+                save();
+                refresh();
+            }
+        });
         undo = button("Отмена", R.drawable.ic_undo, controls, () -> {
-                    if (dailyMode) {
-                        dailySession.undo();
-                    } else if (undoAllowance.remaining() > 0 && engine.undo()) {
-                        undoAllowance.consume();
-                    }
-                    save();
-                    refresh();
-                }
-        );
+            if (dailyMode) {
+                dailySession.undo();
+            } else if (undoAllowance.remaining() > 0 && engine.undo()) {
+                undoAllowance.consume();
+            }
+            save();
+            refresh();
+        });
         FrameLayout undoFrame = new FrameLayout(this);
         android.view.ViewGroup.LayoutParams undoParams = undo.getLayoutParams();
         controls.removeView(undo);
         controls.addView(undoFrame, undoParams);
         undoFrame.addView(undo, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
         undo.setPadding(dp(UNDO_ICON_SIDE_PADDING_DP), dp(UNDO_ICON_TOP_PADDING_DP), dp(UNDO_ICON_SIDE_PADDING_DP), dp(UNDO_ICON_BOTTOM_PADDING_DP));
-        undoLabel = new TextView(this);
-        undoLabel.setTextColor(Color.WHITE);
-        undoLabel.setTextSize(UNDO_COUNT_TEXT_SP);
-        undoLabel.setIncludeFontPadding(false);
-        undoLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        undoLabel.setGravity(Gravity.CENTER);
+        undoLabel = createUndoLabel();
         FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(MATCH_PARENT, dp(UNDO_LABEL_HEIGHT_DP), Gravity.BOTTOM);
         labelParams.bottomMargin = dp(UNDO_LABEL_BOTTOM_MARGIN_DP);
         undoFrame.addView(undoLabel, labelParams);
-        modeCard = new DailyModeCard(this, () -> {
+        return controls;
+    }
+
+    private TextView createUndoLabel() {
+        TextView view = new TextView(this);
+        view.setTextColor(Color.WHITE);
+        view.setTextSize(UNDO_COUNT_TEXT_SP);
+        view.setIncludeFontPadding(false);
+        view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        view.setGravity(Gravity.CENTER);
+        return view;
+    }
+
+    private DailyModeCard createModeCard() {
+        return new DailyModeCard(this, () -> {
             if (dailyMode) {
                 switchOrdinary();
             } else {
                 openDaily();
             }
         });
-        root.addView(controls, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
-        LinearLayout.LayoutParams ribbonParams = new LinearLayout.LayoutParams(dp(LEVEL_RIBBON_WIDTH_DP), dp(LEVEL_RIBBON_HEIGHT_DP));
-        ribbonParams.gravity = Gravity.CENTER_HORIZONTAL;
-        ribbonParams.topMargin = dp(LEVEL_RIBBON_TOP_MARGIN_DP);
-        ribbonParams.bottomMargin = dp(LEVEL_RIBBON_BOTTOM_MARGIN_DP);
-        root.addView(title, ribbonParams);
-        dailyInfo = new TextView(this);
-        dailyInfo.setTextColor(STATUS_TEXT_COLOR);
-        dailyInfo.setTextSize(13);
-        dailyInfo.setGravity(Gravity.CENTER);
-        root.addView(dailyInfo, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
-        statusParams.gravity = Gravity.CENTER_HORIZONTAL;
-        statusParams.topMargin = dp(10);
-        root.addView(status, statusParams);
-        root.addView(board, new LinearLayout.LayoutParams(MATCH_PARENT, 0, 1));
-        todayButton = new Button(this);
-        todayButton.setText("Задача на сегодня");
-        ActionButtonStyle.apply(todayButton);
-        todayButton.setOnClickListener(view -> openDaily());
-        LinearLayout.LayoutParams todayParams = new LinearLayout.LayoutParams(MATCH_PARENT, dp(48));
-        todayParams.bottomMargin = dp(8);
-        root.addView(todayButton, todayParams);
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT);
-        cardParams.topMargin = dp(16);
-        root.addView(modeCard, cardParams);
-        screen = new FrameLayout(this);
-        screen.addView(root, new FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
-        setContentView(screen);
-        board.listener = new GameView.Listener() {
+    }
+
+    private TextView createDailyInfo() {
+        TextView view = new TextView(this);
+        view.setTextColor(STATUS_TEXT_COLOR);
+        view.setTextSize(13);
+        view.setGravity(Gravity.CENTER);
+        return view;
+    }
+
+    private Button createTodayButton() {
+        Button view = new Button(this);
+        view.setText("Задача на сегодня");
+        ActionButtonStyle.apply(view);
+        view.setOnClickListener(v -> openDaily());
+        return view;
+    }
+
+    private GameView.Listener listener() {
+        return new GameView.Listener() {
             public void unlockExtra() {
-                if (!dailyMode && !generating && !board.busy && engine != null && extraCooldown.available() && engine.addTube()) {
-                    extraCooldown.acquired();
-                    save();
-                    refresh();
-                }
+                unlockExtraTube();
             }
 
             public void pour(Move m) {
-                GameState before = engine.state();
-                if (dailyMode ? dailySession.move(m) : engine.move(m)) {
-                    if (dailyMode) {
-                        dailyProgress.record(dailySession);
-                    } else if (engine.state().solved()) {
-                        level++;
-                        resetUnavailableRewards();
-                        if (undoAllowance.remaining() < UndoAllowance.LIMIT && ++undoRewardWins == 3) {
-                            undoRewardWins = 0;
-                            pendingRewardEffects |= 1;
-                        }
-                        if (!extraCooldown.available() && ++extraRewardWins == 5) {
-                            extraRewardWins = 0;
-                            pendingRewardEffects |= 2;
-                        }
-                    }
-                    save();
-                    board.animatePour(before, engine.state(), m, () -> {
-                                if (engine.state().solved()) {
-                                    complete();
-                                } else {
-                                    refresh();
-                                }
-                            }
-                    );
-                    refreshControls();
-                }
+                onPour(m);
             }
+        };
+    }
+
+    private void unlockExtraTube() {
+        if (!dailyMode && !generating && !board.busy && engine != null && extraCooldown.available() && engine.addTube()) {
+            extraCooldown.acquired();
+            save();
+            refresh();
         }
-        ;
+    }
+
+    private void onPour(Move m) {
+        GameState before = engine.state();
+        if (dailyMode ? dailySession.move(m) : engine.move(m)) {
+            if (dailyMode) {
+                dailyProgress.record(dailySession);
+            } else if (engine.state().solved()) {
+                level++;
+                recordWinRewards();
+            }
+            save();
+            board.animatePour(before, engine.state(), m, () -> {
+                if (engine.state().solved()) {
+                    complete();
+                } else {
+                    refresh();
+                }
+            });
+            refreshControls();
+        }
+    }
+
+    private void recordWinRewards() {
+        resetUnavailableRewards();
+        if (undoAllowance.remaining() < UndoAllowance.LIMIT && ++undoRewardWins == 3) {
+            undoRewardWins = 0;
+            pendingRewardEffects |= 1;
+        }
+        if (!extraCooldown.available() && ++extraRewardWins == 5) {
+            extraRewardWins = 0;
+            pendingRewardEffects |= 2;
+        }
+    }
+
+    private void restoreState() {
         GamePersistence.Saved saved;
         try {
             saved = persistence.load();
@@ -263,21 +324,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if (saved != null) {
-            level = saved.level();
-            ordinaryEngine = saved.engine();
-            engine = dailyMode ? dailySession.engine() : ordinaryEngine;
-            extraCooldown = new ExtraTubeCooldown(saved.extraAvailableAt(), System::currentTimeMillis);
-            undoAllowance = new UndoAllowance(saved.undoRemaining(), saved.undoRefillAt(), System::currentTimeMillis);
-            undoRewardWins = saved.undoRewardWins();
-            extraRewardWins = saved.extraRewardWins();
-            pendingRewardEffects = saved.pendingRewardEffects();
-            refresh();
-            if (saved.rewound() && !dailyMode) {
-                status.setText("Прогресс возвращён до заполнения большой дополнительной пробирки");
-            }
-            if (engine.state().solved()) {
-                showVictory();
-            }
+            restoreOrdinary(saved);
         } else if (dailyMode) {
             engine = dailySession.engine();
             refresh();
@@ -286,6 +333,24 @@ public final class MainActivity extends Activity {
             }
         } else {
             generate();
+        }
+    }
+
+    private void restoreOrdinary(GamePersistence.Saved saved) {
+        level = saved.level();
+        ordinaryEngine = saved.engine();
+        engine = dailyMode ? dailySession.engine() : ordinaryEngine;
+        extraCooldown = new ExtraTubeCooldown(saved.extraAvailableAt(), System::currentTimeMillis);
+        undoAllowance = new UndoAllowance(saved.undoRemaining(), saved.undoRefillAt(), System::currentTimeMillis);
+        undoRewardWins = saved.undoRewardWins();
+        extraRewardWins = saved.extraRewardWins();
+        pendingRewardEffects = saved.pendingRewardEffects();
+        refresh();
+        if (saved.rewound() && !dailyMode) {
+            status.setText("Прогресс возвращён до заполнения большой дополнительной пробирки");
+        }
+        if (engine.state().solved()) {
+            showVictory();
         }
     }
 
@@ -334,6 +399,14 @@ public final class MainActivity extends Activity {
         resetUnavailableRewards();
         // Animation guards live in the click handlers so controls keep a stable appearance.
         boolean active = engine != null && !generating && !engine.state().solved();
+        refreshActionButtons(active);
+        refreshBoardInput(active);
+        refreshModeControls();
+        refreshStatusText();
+        refreshButtonAppearance();
+    }
+
+    private void refreshActionButtons(boolean active) {
         restart.setEnabled(active && (!dailyMode || dailySession.challenge().date().equals(LocalDate.now())));
         int remaining = undoAllowance.remaining();
         undo.setEnabled(active && !engine.history().isEmpty() && (dailyMode || remaining > 0));
@@ -346,8 +419,14 @@ public final class MainActivity extends Activity {
         }
         undo.setContentDescription(dailyMode ? "Отмена без ограничений; потраченные ходы сохраняются"
                 : remaining > 0 ? "Отмена: осталось " + remaining : "Отмена доступна через " + seconds + " секунд");
+    }
+
+    private void refreshBoardInput(boolean active) {
         board.inputEnabled = active && !board.busy;
         board.setExtraWaitMillis(extraCooldown.remainingMillis());
+    }
+
+    private void refreshModeControls() {
         boolean canSwitch = storageReady && !generating && engine != null;
         modeCard.setEnabled(canSwitch);
         todayButton.setEnabled(canSwitch);
@@ -364,6 +443,9 @@ public final class MainActivity extends Activity {
             dailyInfo.setText(completedWeeks > 0
                     ? getString(R.string.daily_date_with_weeks, date, completedWeeks) : date);
         }
+    }
+
+    private void refreshStatusText() {
         if (dailyMode && dailySession != null && !generating) {
             status.setText(dailySession.bestMoves() > 0
                     ? getString(R.string.daily_moves_with_best, dailySession.moves(),
@@ -374,6 +456,9 @@ public final class MainActivity extends Activity {
             status.setText("Не удалось сохранить прогресс");
         }
         status.setVisibility(status.getText().length() > 0 ? android.view.View.VISIBLE : android.view.View.GONE);
+    }
+
+    private void refreshButtonAppearance() {
         undo.setTooltipText(dailyMode ? "Отмена не возвращает потраченные ходы" : "Отмена");
         restart.setAlpha(restart.isEnabled() ? 1f : DISABLED_CONTROL_ALPHA);
         undo.setAlpha(undo.isEnabled() ? 1f : DISABLED_CONTROL_ALPHA);
@@ -435,7 +520,7 @@ public final class MainActivity extends Activity {
         android.view.View sparks = new android.view.View(this) {
             private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
 
-            @Override protected void onDraw(android.graphics.Canvas canvas) {
+            @Override protected void onDraw(@NonNull android.graphics.Canvas canvas) {
                 float progress = (float) animator.getAnimatedValue();
                 paint.setStrokeWidth(dp(1));
                 paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
@@ -501,60 +586,84 @@ public final class MainActivity extends Activity {
     }
 
     private void generate() {
-        generating = true;
-        preparingDaily = false;
-        final int request = ++generationId;
-        refresh();
+        final int request = beginGeneration(false);
         final long requestedLevel = level;
         worker.execute(() -> {
-                    try {
-                        GameState next = new LevelGenerator().generateForLevel(requestedLevel);
-                        runOnUiThread(() -> {
-                                    if (destroyed || request != generationId) {
-                                        return;
-                                    }
-                                    // Commit rewards only when the next level is ready to replace the completed one.
-                                    if ((pendingRewardEffects & 1) != 0) {
-                                        undoAllowance.reward();
-                                    }
-                                    if ((pendingRewardEffects & 2) != 0) {
-                                        extraCooldown.reward();
-                                    }
-                                    engine = new GameEngine(next);
-                                    ordinaryEngine = engine;
-                                    generating = false;
-                                    save();
-                                    refresh();
-                                    if (victoryScreen != null) {
-                                        screen.removeView(victoryScreen);
-                                        victoryScreen = null;
-                                    }
-                                    board.postDelayed(this::showPendingRewardEffects, 180);
-                                }
-                        );
-                    } catch (Exception e) {
-                        android.util.Log.e("FreeColor", "Generation failed", e);
-                        runOnUiThread(() -> {
-                                    if (destroyed || request != generationId) {
-                                        return;
-                                    }
-                                    status.setText("Повторяем проверку уровня…");
-                                    if (victoryScreen != null) {
-                                        generating = false;
-                                        victoryScreen.allowRetry();
-                                        return;
-                                    }
-                                    board.postDelayed(() -> {
-                                                if (!destroyed && request == generationId) {
-                                                    generate();
-                                                }
-                                            }
-                                            , GENERATION_RETRY_MILLIS);
-                                }
-                        );
-                    }
-                }
-        );
+            try {
+                GameState next = new LevelGenerator().generateForLevel(requestedLevel);
+                runOnUiThread(() -> commitGeneratedLevel(next, request));
+            } catch (Exception e) {
+                android.util.Log.e("FreeColor", "Generation failed", e);
+                runOnUiThread(() -> retryGeneration(request));
+            }
+        });
+    }
+
+    private void generateDaily(LocalDate date) {
+        if (!canChangeMode()) {
+            return;
+        }
+        clearResults();
+        final int request = beginGeneration(true);
+        worker.execute(() -> {
+            try {
+                DailyChallenge challenge = new DailyGenerator().generate(date);
+                runOnUiThread(() -> commitGeneratedDaily(challenge, request));
+            } catch (CancellationException cancelled) {
+                // Activity destruction interrupts bounded search without selecting a different board.
+            } catch (Exception error) {
+                android.util.Log.e("FreeColor", "Daily generation failed", error);
+                runOnUiThread(() -> failDailyGeneration(request));
+            }
+        });
+    }
+
+    private int beginGeneration(boolean preparing) {
+        generating = true;
+        preparingDaily = preparing;
+        int request = ++generationId;
+        refresh();
+        return request;
+    }
+
+    private void commitGeneratedLevel(GameState next, int request) {
+        if (destroyed || request != generationId) {
+            return;
+        }
+        // Commit rewards only when the next level is ready to replace the completed one.
+        if ((pendingRewardEffects & 1) != 0) {
+            undoAllowance.reward();
+        }
+        if ((pendingRewardEffects & 2) != 0) {
+            extraCooldown.reward();
+        }
+        engine = new GameEngine(next);
+        ordinaryEngine = engine;
+        generating = false;
+        save();
+        refresh();
+        if (victoryScreen != null) {
+            screen.removeView(victoryScreen);
+            victoryScreen = null;
+        }
+        board.postDelayed(this::showPendingRewardEffects, 180);
+    }
+
+    private void retryGeneration(int request) {
+        if (destroyed || request != generationId) {
+            return;
+        }
+        status.setText("Повторяем проверку уровня…");
+        if (victoryScreen != null) {
+            generating = false;
+            victoryScreen.allowRetry();
+            return;
+        }
+        board.postDelayed(() -> {
+            if (!destroyed && request == generationId) {
+                generate();
+            }
+        }, GENERATION_RETRY_MILLIS);
     }
 
     private void clearResults() {
@@ -633,42 +742,24 @@ public final class MainActivity extends Activity {
         refresh();
     }
 
-    private void generateDaily(LocalDate date) {
-        if (!canChangeMode()) {
+    private void commitGeneratedDaily(DailyChallenge challenge, int request) {
+        if (destroyed || request != generationId) {
             return;
         }
-        clearResults();
-        generating = true;
-        preparingDaily = true;
-        final int request = ++generationId;
-        refresh();
-        worker.execute(() -> {
-            try {
-                DailyChallenge challenge = new DailyGenerator().generate(date);
-                runOnUiThread(() -> {
-                    if (destroyed || request != generationId) {
-                        return;
-                    }
-                    generating = false;
-                    preparingDaily = false;
-                    dailySession = new DailySession(challenge);
-                    activateDaily();
-                });
-            } catch (CancellationException cancelled) {
-                // Activity destruction interrupts bounded search without selecting a different board.
-            } catch (Exception error) {
-                android.util.Log.e("FreeColor", "Daily generation failed", error);
-                runOnUiThread(() -> {
-                    if (destroyed || request != generationId) {
-                        return;
-                    }
-                    generating = false;
-                    preparingDaily = false;
-                    refreshControls();
-                    status.setText("Не удалось подготовить задачу дня. Попробуйте снова.");
-                });
-            }
-        });
+        generating = false;
+        preparingDaily = false;
+        dailySession = new DailySession(challenge);
+        activateDaily();
+    }
+
+    private void failDailyGeneration(int request) {
+        if (destroyed || request != generationId) {
+            return;
+        }
+        generating = false;
+        preparingDaily = false;
+        refreshControls();
+        status.setText("Не удалось подготовить задачу дня. Попробуйте снова.");
     }
 
     @Override
