@@ -68,7 +68,6 @@ final class GameView extends View {
     private static final float POUR_TRANSFER_DURATION = .5f;
     private static final float POUR_STREAM_END = POUR_APPROACH_END + POUR_TRANSFER_DURATION;
     private static final float POUR_LIFT_HEIGHT_RATIO = .3f;
-    private static final float POUR_ANGLE_DEGREES = 65f;
     private static final float POUR_PIVOT_RATIO = .2f;
     private static final float POUR_STREAM_WIDTH_DP = 5f;
 
@@ -184,6 +183,7 @@ final class GameView extends View {
     private final Paint hiddenTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint.FontMetrics hiddenFontMetrics = new Paint.FontMetrics();
     private final RectF displayedBounds = new RectF();
+    private final TiltedLiquidGeometry tiltedLiquid = new TiltedLiquidGeometry();
     private final RectF pourBounds = new RectF();
     private final RectF surfaceBounds = new RectF();
     private final Path glassPath = new Path();
@@ -349,7 +349,10 @@ final class GameView extends View {
             RectF src = boxes[moving.source()], dst = boxes[moving.destination()];
 
             float travel = Math.min(1, progress / POUR_APPROACH_END) * Math.min(1, (1 - progress) / POUR_RETURN_DURATION);
-            double fullAngle = Math.toRadians(POUR_ANGLE_DEGREES);
+            float fill = before.size(moving.source()) - pourAmount * transfer();
+            int sourceCapacity = before.capacity(moving.source());
+            float pourAngle = pourAngle(src, fill, sourceCapacity);
+            double fullAngle = Math.toRadians(pourAngle);
             float rimOffset = src.width() * (.5f - GLASS_INSET_RATIO) + dp(RIM_OVERHANG_DP);
             float lipOffset = rimOffset * (float) Math.cos(fullAngle)
                     + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(fullAngle);
@@ -359,8 +362,8 @@ final class GameView extends View {
             RectF b = pourBounds;
             b.set(x, y, x + src.width(), y + src.height());
             c.save();
-            c.rotate(POUR_ANGLE_DEGREES * travel, b.centerX(), b.top + src.width() * POUR_PIVOT_RATIO);
-            drawTube(c, b, previousUnits[moving.source()], previousVisibility[moving.source()], before.size(moving.source()) - pourAmount * transfer(), true, before.capacity(moving.source()));
+            c.rotate(pourAngle * travel, b.centerX(), b.top + src.width() * POUR_PIVOT_RATIO);
+            drawTube(c, b, previousUnits[moving.source()], previousVisibility[moving.source()], fill, true, sourceCapacity, pourAngle * travel);
             c.restore();
             if (progress > POUR_APPROACH_END && progress < POUR_STREAM_END) {
                 paint.setColor(COLORS[before.top(moving.source())]);
@@ -368,7 +371,7 @@ final class GameView extends View {
                 int capacity = state.capacity(moving.destination());
                 float surface = dst.bottom - liquidFillHeight(dst,
                         before.size(moving.destination()) + pourAmount * transfer(), capacity);
-                double angle = Math.toRadians(POUR_ANGLE_DEGREES * travel);
+                double angle = Math.toRadians(pourAngle * travel);
                 float lipX = b.centerX() + rimOffset * (float) Math.cos(angle)
                         + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(angle);
                 float lipY = b.top + rimOffset * (float) Math.sin(angle)
@@ -491,7 +494,23 @@ final class GameView extends View {
         return Math.max(0, Math.min(1, (progress - POUR_APPROACH_END) / POUR_TRANSFER_DURATION));
     }
 
+    private float pourAngle(RectF bounds, float fill, int capacity) {
+        configureLiquidGeometry(bounds);
+        double area = tiltedLiquid.areaBelow(-liquidFillHeight(bounds, fill, capacity));
+        return tiltedLiquid.pourAngle(area);
+    }
+
+    private void configureLiquidGeometry(RectF bounds) {
+        tiltedLiquid.configure(bounds.width() * (1 - 2 * GLASS_INSET_RATIO),
+                bounds.height(), bounds.width() * GLASS_BOTTOM_CURVE_RATIO);
+    }
+
     private void drawTube(Canvas c, RectF b, int[] units, boolean[] revealed, float fill, boolean highlight, int capacity) {
+        drawTube(c, b, units, revealed, fill, highlight, capacity, 0);
+    }
+
+    private void drawTube(Canvas c, RectF b, int[] units, boolean[] revealed, float fill,
+            boolean highlight, int capacity, float angle) {
         float inset = b.width() * GLASS_INSET_RATIO, bottom = b.bottom, liquidHeight = liquidHeight(b, capacity);
         float rimOverhang = dp(RIM_OVERHANG_DP), rimHalfHeight = dp(RIM_HALF_HEIGHT_DP);
         float innerWidth = b.width() - inset * 2;
@@ -509,62 +528,66 @@ final class GameView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(capacity == GameConfig.EXTRA_CAPACITY ? EXTRA_GLASS_TINT : GLASS_TINT);
         c.drawRect(b, paint);
-        // Matching units form one cylinder. Internal interfaces share curved
-        // contours; only the exposed surface gets a lit elliptical cap.
-        paint.setAntiAlias(true);
-        for (int start = 0; start < units.length && start < fill; ) {
-            int end = start + 1;
-            while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
-                end++;
-            }
-            float visibleEnd = Math.min(fill, end);
-            paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
-            float top = Math.round(bottom - liquidFillHeight(b, visibleEnd, capacity));
-            // Extend the lowest fill past the contour; the glass clip trims it exactly
-            // to the rounded bottom, including fractional pixels during animation.
-            float base = start == 0 ? (float) Math.ceil(bottom) + LIQUID_BOTTOM_OVERSCAN_PX
-                    : Math.round(bottom - liquidFillHeight(b, start, capacity));
-            float left = b.left + inset, right = b.right - inset;
-            boolean surface = visibleEnd >= fill;
-            Path liquid = liquidPath;
-            liquid.reset();
-            liquid.moveTo(left, surface ? top + depth : top);
-            if (surface) {
-                liquid.lineTo(right, top + depth);
-            } else {
-                liquid.quadTo(b.centerX(), top + depth * 2, right, top);
-            }
-            liquid.lineTo(right, base);
-            if (start == 0) {
-                liquid.lineTo(left, base);
-            } else {
-                liquid.quadTo(b.centerX(), base + depth * 2, left, base);
-            }
-            liquid.close();
-            surfaceBounds.set(left, top, right, top + depth * 2);
-            if (surface) {
-                liquid.addOval(surfaceBounds, Path.Direction.CW);
-            }
-            if (revealed[start]) {
-                int color = COLORS[units[start]];
-                paint.setShader(liquidShader(units[start], left, right));
-                c.drawPath(liquid, paint);
-                paint.setShader(null);
-                if (surface) {
-                    paint.setColor(shade(color, LIQUID_SURFACE_SHADE));
-                    c.drawOval(surfaceBounds, paint);
+        if (angle > .01f) {
+            drawTiltedLiquid(c, b, units, revealed, fill, capacity, angle);
+        } else {
+            // Matching units form one cylinder. Internal interfaces share curved
+            // contours; only the exposed surface gets a lit elliptical cap.
+            paint.setAntiAlias(true);
+            for (int start = 0; start < units.length && start < fill; ) {
+                int end = start + 1;
+                while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
+                    end++;
                 }
-            } else {
-                c.drawPath(liquid, paint);
+                float visibleEnd = Math.min(fill, end);
+                paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
+                float top = Math.round(bottom - liquidFillHeight(b, visibleEnd, capacity));
+                // Extend the lowest fill past the contour; the glass clip trims it exactly
+                // to the rounded bottom, including fractional pixels during animation.
+                float base = start == 0 ? (float) Math.ceil(bottom) + LIQUID_BOTTOM_OVERSCAN_PX
+                        : Math.round(bottom - liquidFillHeight(b, start, capacity));
+                float left = b.left + inset, right = b.right - inset;
+                boolean surface = visibleEnd >= fill;
+                Path liquid = liquidPath;
+                liquid.reset();
+                liquid.moveTo(left, surface ? top + depth : top);
+                if (surface) {
+                    liquid.lineTo(right, top + depth);
+                } else {
+                    liquid.quadTo(b.centerX(), top + depth * 2, right, top);
+                }
+                liquid.lineTo(right, base);
+                if (start == 0) {
+                    liquid.lineTo(left, base);
+                } else {
+                    liquid.quadTo(b.centerX(), base + depth * 2, left, base);
+                }
+                liquid.close();
+                surfaceBounds.set(left, top, right, top + depth * 2);
+                if (surface) {
+                    liquid.addOval(surfaceBounds, Path.Direction.CW);
+                }
+                if (revealed[start]) {
+                    int color = COLORS[units[start]];
+                    paint.setShader(liquidShader(units[start], left, right));
+                    c.drawPath(liquid, paint);
+                    paint.setShader(null);
+                    if (surface) {
+                        paint.setColor(shade(color, LIQUID_SURFACE_SHADE));
+                        c.drawOval(surfaceBounds, paint);
+                    }
+                } else {
+                    c.drawPath(liquid, paint);
+                }
+                if (!revealed[start]) {
+                    hiddenTextPaint.setColor(HIDDEN_LABEL);
+                    hiddenTextPaint.setTextSize(liquidHeight / capacity * HIDDEN_LABEL_HEIGHT_RATIO);
+                    hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
+                    float centerY = (top + base) / 2f;
+                    c.drawText("?", b.centerX(), centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2f, hiddenTextPaint);
+                }
+                start = end;
             }
-            if (!revealed[start]) {
-                hiddenTextPaint.setColor(HIDDEN_LABEL);
-                hiddenTextPaint.setTextSize(liquidHeight / capacity * HIDDEN_LABEL_HEIGHT_RATIO);
-                hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
-                float centerY = (top + base) / 2f;
-                c.drawText("?", b.centerX(), centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2f, hiddenTextPaint);
-            }
-            start = end;
         }
         paint.setAntiAlias(true);
         c.restore();
@@ -603,6 +626,54 @@ final class GameView extends View {
                     b.left + b.width() * REFLECTION_X_RATIO, b.bottom - b.width() * REFLECTION_BOTTOM_OFFSET_RATIO, paint);
         }
         paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawTiltedLiquid(Canvas canvas, RectF bounds, int[] units, boolean[] revealed,
+            float fill, int capacity, float angle) {
+        configureLiquidGeometry(bounds);
+        // Undo only the drawing rotation after clipping the glass. Horizontal bands
+        // now follow gravity while the existing glass contour contains every layer.
+        canvas.save();
+        canvas.rotate(-angle, bounds.centerX(), bounds.bottom);
+        float base = 0;
+        for (int start = 0; start < units.length && start < fill; ) {
+            int end = start + 1;
+            while (end < units.length && revealed[start] && revealed[end] && units[end] == units[start]) {
+                end++;
+            }
+            tiltedLiquid.rotate(0);
+            double area = tiltedLiquid.areaBelow(-liquidFillHeight(bounds, Math.min(fill, end), capacity));
+            tiltedLiquid.rotate(angle);
+            float top = tiltedLiquid.surfaceForArea(area);
+            if (start == 0) {
+                base = tiltedLiquid.bottom() + 1;
+            }
+            float left = bounds.centerX() + tiltedLiquid.left() - 1;
+            float right = bounds.centerX() + tiltedLiquid.right() + 1;
+            paint.setColor(revealed[start] ? COLORS[units[start]] : HIDDEN_LIQUID);
+            if (revealed[start]) {
+                paint.setShader(liquidShader(units[start], left, right));
+            }
+            canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + base, paint);
+            paint.setShader(null);
+            if (revealed[start] && end >= fill) {
+                paint.setColor(shade(COLORS[units[start]], LIQUID_SURFACE_SHADE));
+                canvas.drawRect(left, bounds.bottom + top, right, bounds.bottom + Math.min(base, top + dp(1)), paint);
+            }
+            if (!revealed[start]) {
+                float centerY = (top + base) / 2;
+                hiddenTextPaint.setColor(HIDDEN_LABEL);
+                hiddenTextPaint.setTextSize(Math.min(liquidHeight(bounds, capacity) / capacity
+                        * HIDDEN_LABEL_HEIGHT_RATIO, (base - top) * .8f));
+                hiddenTextPaint.getFontMetrics(hiddenFontMetrics);
+                canvas.drawText("?", bounds.centerX() + tiltedLiquid.centerXAt(centerY),
+                        bounds.bottom + centerY - (hiddenFontMetrics.ascent + hiddenFontMetrics.descent) / 2,
+                        hiddenTextPaint);
+            }
+            base = top;
+            start = end;
+        }
+        canvas.restore();
     }
 
     private static int shade(int color, float factor) {
