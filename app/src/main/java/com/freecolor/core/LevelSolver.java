@@ -58,6 +58,20 @@ public final class LevelSolver {
         if (!visited.add(s.canonical())) {
             return false;
         }
+        for (Move m : candidateMoves(s)) {
+            path.add(m);
+            if (dfs(Rules.pour(s, m), depth + 1)) {
+                return true;
+            }
+            path.remove(path.size() - 1);
+            if (visited.size() >= budget) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private List<Move> candidateMoves(GameState s) {
         ArrayList<Move> moves = new ArrayList<>();
         for (int i = 0; i < s.count(); i++) {
             Set<Integer> emptyCapacities = new HashSet<>();
@@ -70,17 +84,9 @@ public final class LevelSolver {
                     if (!emptyCapacities.add(s.capacity(j))) {
                         continue;
                     }
-                    int[] t = s.tube(i);
-                    boolean mono = true;
-                    for (int c : t) {
-                        if (c != t[0]) {
-                            mono = false;
-                            break;
-                        }
-                    }
                     // Only moving an entire monochromatic tube to an equivalent empty
                     // tube is redundant. A one-unit buffer can split a top group.
-                    if (mono && s.capacity(i) == s.capacity(j)) {
+                    if (isMono(s.tube(i)) && s.capacity(i) == s.capacity(j)) {
                         continue;
                     }
                 }
@@ -88,17 +94,16 @@ public final class LevelSolver {
             }
         }
         moves.sort(Comparator.comparingInt((Move m) -> s.size(m.destination()) == 0 ? 0 : GameConfig.SOLVER_MATCHING_DESTINATION_BONUS + Rules.amount(s, m)).reversed());
-        for (Move m : moves) {
-            path.add(m);
-            if (dfs(Rules.pour(s, m), depth + 1)) {
-                return true;
-            }
-            path.remove(path.size() - 1);
-            if (visited.size() >= budget) {
+        return moves;
+    }
+
+    private static boolean isMono(int[] tube) {
+        for (int c : tube) {
+            if (c != tube[0]) {
                 return false;
             }
         }
-        return false;
+        return true;
     }
 }
 

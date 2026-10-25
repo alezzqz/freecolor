@@ -37,5 +37,7 @@ android {
 dependencies {
  compileOnly 'androidx.annotation:annotation:1.3.0'
  testImplementation 'junit:junit:4.13.2'
+ // Android's mockable jar stubs org.json; a real implementation makes serialization unit-testable.
+ testImplementation 'org.json:json:20240303'
 }
 

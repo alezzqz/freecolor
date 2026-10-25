@@ -41,19 +41,7 @@ public final class DailySolver {
     }
 
     public Solution solve(GameState initial) {
-        if (initial.extra || initial.hiddenColors || initial.count() > GameConfig.DAILY_COLORS + GameConfig.EMPTY_TUBES) {
-            throw new IllegalArgumentException("Daily search requires open colors and ordinary tubes");
-        }
-        int[] tubes = new int[initial.count()];
-        for (int i = 0; i < tubes.length; i++) {
-            tubes[i] = 1;
-            for (int color : initial.tube(i)) {
-                if (color >= GameConfig.DAILY_COLORS) {
-                    throw new IllegalArgumentException("Unsupported daily color");
-                }
-                tubes[i] = (tubes[i] << 3) | (color + 1);
-            }
-        }
+        int[] tubes = encode(initial);
         ArrayDeque<Node> queue = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
         queue.add(new Node(tubes, null, null));
@@ -62,13 +50,7 @@ public final class DailySolver {
             checkCancelled();
             Node current = queue.removeFirst();
             if (solved(current.tubes())) {
-                ArrayList<Move> path = new ArrayList<>();
-                while (current.parent() != null) {
-                    path.add(current.move());
-                    current = current.parent();
-                }
-                Collections.reverse(path);
-                return new Solution(true, List.copyOf(path), visited.size());
+                return new Solution(true, reconstructPath(current), visited.size());
             }
             for (int source = 0; source < tubes.length; source++) {
                 for (int destination = 0; destination < tubes.length; destination++) {
@@ -76,12 +58,7 @@ public final class DailySolver {
                     if (amount == 0) {
                         continue;
                     }
-                    int[] next = current.tubes().clone();
-                    int color = next[source] & 7;
-                    next[source] >>= 3 * amount;
-                    for (int i = 0; i < amount; i++) {
-                        next[destination] = (next[destination] << 3) | color;
-                    }
+                    int[] next = pour(current.tubes(), source, destination, amount);
                     String canonical = key(next);
                     if (visited.contains(canonical)) {
                         continue;
@@ -96,6 +73,43 @@ public final class DailySolver {
             }
         }
         return new Solution(false, List.of(), visited.size());
+    }
+
+    private static int[] encode(GameState initial) {
+        if (initial.extra || initial.hiddenColors || initial.count() > GameConfig.DAILY_COLORS + GameConfig.EMPTY_TUBES) {
+            throw new IllegalArgumentException("Daily search requires open colors and ordinary tubes");
+        }
+        int[] tubes = new int[initial.count()];
+        for (int i = 0; i < tubes.length; i++) {
+            tubes[i] = 1;
+            for (int color : initial.tube(i)) {
+                if (color >= GameConfig.DAILY_COLORS) {
+                    throw new IllegalArgumentException("Unsupported daily color");
+                }
+                tubes[i] = (tubes[i] << 3) | (color + 1);
+            }
+        }
+        return tubes;
+    }
+
+    private static int[] pour(int[] tubes, int source, int destination, int amount) {
+        int[] next = tubes.clone();
+        int color = next[source] & 7;
+        next[source] >>= 3 * amount;
+        for (int i = 0; i < amount; i++) {
+            next[destination] = (next[destination] << 3) | color;
+        }
+        return next;
+    }
+
+    private static List<Move> reconstructPath(Node node) {
+        ArrayList<Move> path = new ArrayList<>();
+        while (node.parent() != null) {
+            path.add(node.move());
+            node = node.parent();
+        }
+        Collections.reverse(path);
+        return List.copyOf(path);
     }
 
     static void checkCancelled() {

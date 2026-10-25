@@ -134,10 +134,15 @@ final class GamePersistence {
         if (raw == null) {
             return null;
         }
-        return decode(raw);
+        try {
+            return decode(raw);
+        } catch (IllegalStateException ex) {
+            android.util.Log.e("FreeColor", "Cannot restore saved progress", ex);
+            throw ex;
+        }
     }
 
-    private Saved decode(String raw) {
+    static Saved decode(String raw) {
         try {
             JSONObject o = new JSONObject(raw);
             int version = o.getInt("version");
@@ -150,42 +155,53 @@ final class GamePersistence {
             if (level < GameConfig.FIRST_LEVEL || !LevelValidator.validInitial(Objects.requireNonNull(original)) || (current != null && !LevelValidator.compatible(original, current))) {
                 throw new JSONException("Invalid save");
             }
-            ArrayList<GameState> h = new ArrayList<>();
-            JSONArray history = o.getJSONArray("history");
-            for (int i = 0; i < history.length(); i++) {
-                GameState entry = read(history.getJSONArray(i), legacy);
-                if (entry == null) {
-                    continue;
-                }
-                if (!LevelValidator.compatible(original, entry)) {
-                    throw new JSONException("Invalid undo state");
-                }
-                h.add(entry);
-            }
-
+            ArrayList<GameState> history = readHistory(o.getJSONArray("history"), legacy, original);
             boolean rewound = current == null;
             if (rewound) {
-                current = h.isEmpty() ? original : h.remove(h.size() - 1);
+                current = history.isEmpty() ? original : history.remove(history.size() - 1);
             }
-            long extraAvailableAt = version >= EXTRA_COOLDOWN_VERSION ? o.getLong("extraAvailableAt") : 0;
-            if (extraAvailableAt < 0) {
-                throw new JSONException("Invalid cooldown deadline");
-            }
-            int undoRemaining = version >= UNDO_ALLOWANCE_VERSION ? o.getInt("undoRemaining") : UndoAllowance.LIMIT;
-            long undoRefillAt = version >= UNDO_ALLOWANCE_VERSION ? o.getLong("undoRefillAt") : 0;
-            new UndoAllowance(undoRemaining, undoRefillAt, System::currentTimeMillis);
-            int undoRewardWins = o.optInt("undoRewardWins", 0);
-            int extraRewardWins = o.optInt("extraRewardWins", 0);
-            if (undoRewardWins < 0 || undoRewardWins >= 3 || extraRewardWins < 0 || extraRewardWins >= 5) {
-                throw new JSONException("Invalid reward progress");
-            }
-            return new Saved(level, new GameEngine(original, current, h), rewound, extraAvailableAt,
-                    undoRemaining, undoRefillAt, undoRewardWins, extraRewardWins,
-                    o.optInt("pendingRewardEffects", 0) & 3);
+            Rewards rewards = readRewards(o, version);
+            return new Saved(level, new GameEngine(original, current, history), rewound,
+                    rewards.extraAvailableAt(), rewards.undoRemaining(), rewards.undoRefillAt(),
+                    rewards.undoRewardWins(), rewards.extraRewardWins(), rewards.pendingRewardEffects());
         } catch (Exception ex) {
-            android.util.Log.e("FreeColor", "Cannot restore saved progress", ex);
             throw new IllegalStateException("Saved progress is invalid; original record retained", ex);
         }
+    }
+
+    private record Rewards(long extraAvailableAt, int undoRemaining, long undoRefillAt,
+                           int undoRewardWins, int extraRewardWins, int pendingRewardEffects) {}
+
+    private static ArrayList<GameState> readHistory(JSONArray history, boolean legacy, GameState original) throws JSONException {
+        ArrayList<GameState> entries = new ArrayList<>();
+        for (int i = 0; i < history.length(); i++) {
+            GameState entry = read(history.getJSONArray(i), legacy);
+            if (entry == null) {
+                continue;
+            }
+            if (!LevelValidator.compatible(original, entry)) {
+                throw new JSONException("Invalid undo state");
+            }
+            entries.add(entry);
+        }
+        return entries;
+    }
+
+    private static Rewards readRewards(JSONObject o, int version) throws JSONException {
+        long extraAvailableAt = version >= EXTRA_COOLDOWN_VERSION ? o.getLong("extraAvailableAt") : 0;
+        if (extraAvailableAt < 0) {
+            throw new JSONException("Invalid cooldown deadline");
+        }
+        int undoRemaining = version >= UNDO_ALLOWANCE_VERSION ? o.getInt("undoRemaining") : UndoAllowance.LIMIT;
+        long undoRefillAt = version >= UNDO_ALLOWANCE_VERSION ? o.getLong("undoRefillAt") : 0;
+        new UndoAllowance(undoRemaining, undoRefillAt, System::currentTimeMillis);
+        int undoRewardWins = o.optInt("undoRewardWins", 0);
+        int extraRewardWins = o.optInt("extraRewardWins", 0);
+        if (undoRewardWins < 0 || undoRewardWins >= 3 || extraRewardWins < 0 || extraRewardWins >= 5) {
+            throw new JSONException("Invalid reward progress");
+        }
+        return new Rewards(extraAvailableAt, undoRemaining, undoRefillAt, undoRewardWins, extraRewardWins,
+                o.optInt("pendingRewardEffects", 0) & 3);
     }
 }
 
