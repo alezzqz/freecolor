@@ -185,6 +185,8 @@ final class GameView extends View {
     private final RectF displayedBounds = new RectF();
     private final TiltedLiquidGeometry tiltedLiquid = new TiltedLiquidGeometry();
     private final RectF pourBounds = new RectF();
+    private final RectF rotatedPourBounds = new RectF();
+    private final android.graphics.Matrix pourRotation = new android.graphics.Matrix();
     private final RectF surfaceBounds = new RectF();
     private final Path glassPath = new Path();
     private final Path liquidPath = new Path();
@@ -389,7 +391,8 @@ final class GameView extends View {
         float travel = pourTravel();
         float fill = before.size(moving.source()) - pourAmount * transfer();
         int sourceCapacity = before.capacity(moving.source());
-        float angle = pourAngle(src, fill, sourceCapacity);
+        float direction = dst.centerX() < getWidth() / 2f ? -1 : 1;
+        float angle = direction * pourAngle(src, fill, sourceCapacity);
         float rimOffset = src.width() * (.5f - GLASS_INSET_RATIO) + dp(RIM_OVERHANG_DP);
 
         RectF tube = pourTubeBounds(src, dst, angle, travel, rimOffset);
@@ -404,14 +407,29 @@ final class GameView extends View {
 
     private RectF pourTubeBounds(RectF src, RectF dst, float angle, float travel, float rimOffset) {
         double fullAngle = Math.toRadians(angle);
-        float lipOffset = rimOffset * (float) Math.cos(fullAngle)
+        float lipOffset = Math.signum(angle) * rimOffset * (float) Math.cos(fullAngle)
                 + src.width() * POUR_PIVOT_RATIO * (float) Math.sin(fullAngle);
         float x = src.left + (dst.centerX() - src.centerX() - lipOffset) * travel;
         float remainingLift = pourStartLift * (1 - Math.min(1, progress / POUR_APPROACH_END));
         float y = src.top + (dst.top - src.height() * POUR_LIFT_HEIGHT_RATIO - src.top) * travel - remainingLift;
         RectF b = pourBounds;
         b.set(x, y, x + src.width(), y + src.height());
+        keepPourTubeOnScreen(b, angle * travel);
         return b;
+    }
+
+    private void keepPourTubeOnScreen(RectF tube, float angle) {
+        // Include the rim, highlight stroke and antialiasing in the rotated footprint.
+        float margin = dp(RIM_HALF_HEIGHT_DP + SELECTED_GLASS_STROKE_DP);
+        rotatedPourBounds.set(tube);
+        rotatedPourBounds.inset(-margin, -margin);
+        pourRotation.setRotate(angle, tube.centerX(), tube.top + tube.width() * POUR_PIVOT_RATIO);
+        pourRotation.mapRect(rotatedPourBounds);
+        float offsetX = Math.max(0, -rotatedPourBounds.left)
+                + Math.min(0, getWidth() - rotatedPourBounds.right);
+        float offsetY = Math.max(0, -rotatedPourBounds.top)
+                + Math.min(0, getHeight() - rotatedPourBounds.bottom);
+        tube.offset(offsetX, offsetY);
     }
 
     private void drawPouringTube(Canvas c, RectF tube, float fill, int sourceCapacity, float angle, float travel) {
@@ -429,9 +447,10 @@ final class GameView extends View {
             float surface = dst.bottom - liquidFillHeight(dst,
                     before.size(moving.destination()) + pourAmount * transfer(), capacity);
             double currentAngle = Math.toRadians(angle * travel);
-            float lipX = tube.centerX() + rimOffset * (float) Math.cos(currentAngle)
+            float signedRimOffset = Math.signum(angle) * rimOffset;
+            float lipX = tube.centerX() + signedRimOffset * (float) Math.cos(currentAngle)
                     + tube.width() * POUR_PIVOT_RATIO * (float) Math.sin(currentAngle);
-            float lipY = tube.top + rimOffset * (float) Math.sin(currentAngle)
+            float lipY = tube.top + signedRimOffset * (float) Math.sin(currentAngle)
                     + tube.width() * POUR_PIVOT_RATIO * (1 - (float) Math.cos(currentAngle));
             c.drawLine(lipX, lipY, dst.centerX(), surface, paint);
         }
@@ -591,7 +610,7 @@ final class GameView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(capacity == GameConfig.EXTRA_CAPACITY ? EXTRA_GLASS_TINT : GLASS_TINT);
         c.drawRect(b, paint);
-        if (angle > .01f) {
+        if (Math.abs(angle) > .01f) {
             drawTiltedLiquid(c, b, units, revealed, fill, capacity, angle);
         } else {
             drawUprightLiquid(c, b, units, revealed, fill, capacity);

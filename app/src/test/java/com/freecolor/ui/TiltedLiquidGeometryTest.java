@@ -30,7 +30,7 @@ public class TiltedLiquidGeometryTest {
         for (float fill : new float[]{0, .1f, 1, 35, 140, 250}) {
             geometry.rotate(0);
             double area = geometry.areaBelow(-fill);
-            for (float angle : new float[]{0, .01f, 15, 45, 75, 89.99f, 90}) {
+            for (float angle : new float[]{-90, -89.99f, -75, -45, -15, -.01f, 0, .01f, 15, 45, 75, 89.99f, 90}) {
                 geometry.rotate(angle);
                 float surface = geometry.surfaceForArea(area);
                 assertEquals(area, geometry.areaBelow(surface), .02);
