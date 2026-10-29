@@ -22,17 +22,18 @@ package com.freecolor.core;
 import java.util.function.LongSupplier;
 
 /**
- * Global allowance: refill starts only when all ten uses have been consumed.
+ * Global allowance: refill starts only when all available uses have been consumed.
  */
 public final class UndoAllowance {
     public static final int LIMIT = GameConfig.UNDO_ALLOWANCE;
+    public static final int REWARD_LIMIT = GameConfig.UNDO_REWARD_LIMIT;
     public static final long INTERVAL_MILLIS = GameConfig.UNDO_REFILL_MINUTES * GameConfig.SECONDS_PER_MINUTE * GameConfig.MILLIS_PER_SECOND;
     private final LongSupplier clock;
     private int remaining;
     private long refillAt;
 
     public UndoAllowance(int remaining, long refillAt, LongSupplier clock) {
-        if (remaining < 0 || remaining > LIMIT || refillAt < 0
+        if (remaining < 0 || remaining > REWARD_LIMIT || refillAt < 0
                 || (remaining == 0) != (refillAt > 0)) {
             throw new IllegalArgumentException("Invalid undo allowance");
         }
@@ -63,7 +64,7 @@ public final class UndoAllowance {
             refillAt = Math.max(clock.getAsLong(), refillAt
                     - GameConfig.SECONDS_PER_MINUTE * GameConfig.MILLIS_PER_SECOND);
             remaining();
-        } else if (remaining < LIMIT) {
+        } else if (remaining < REWARD_LIMIT) {
             remaining++;
         }
     }

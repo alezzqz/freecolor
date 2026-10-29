@@ -200,6 +200,8 @@ final class GamePersistence {
         if (undoRewardWins < 0 || undoRewardWins >= 3 || extraRewardWins < 0 || extraRewardWins >= 5) {
             throw new JSONException("Invalid reward progress");
         }
+        // Legacy saves may have four wins toward the former five-win reward.
+        extraRewardWins = Math.min(extraRewardWins, GameConfig.EXTRA_TUBE_REWARD_WINS - 1);
         return new Rewards(extraAvailableAt, undoRemaining, undoRefillAt, undoRewardWins, extraRewardWins,
                 o.optInt("pendingRewardEffects", 0) & 3);
     }

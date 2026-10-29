@@ -57,9 +57,9 @@ is that length plus three pours. Four deterministic candidate attempts are bound
 25,000 states each; a preverified reserve board is used if none can be verified. Search
 runs on the background executor and is interrupted when the activity is destroyed.
 
-Every three completed ordinary levels restore one undo use (up to ten), or shorten an active
+Every three completed ordinary levels restore one undo use (up to twenty), or shorten an active
 undo refill timer by one minute. Reaching the timer deadline restores all ten uses.
-Every five completed ordinary levels also shorten an active extra-tube cooldown by one minute.
+Every four completed ordinary levels also shorten an active extra-tube cooldown by one minute.
 
 Each successful pour counts as one move. Daily undo is unlimited and does not refund moves;
 restart resets the attempt counter while preserving the day's best result. Finishing over

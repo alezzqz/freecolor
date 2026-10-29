@@ -25,9 +25,33 @@ import static org.junit.Assert.*;
 
 public class UndoAllowanceTest {
     @Test public void rewardRestoresOneUseWithoutExceedingLimit() {
-        UndoAllowance allowance = new UndoAllowance(9, 0, () -> 1000);
+        UndoAllowance allowance = new UndoAllowance(19, 0, () -> 1000);
         allowance.reward();
         allowance.reward();
+        assertEquals(20, allowance.remaining());
+        assertEquals(0, allowance.refillAt());
+    }
+
+    @Test public void rewardsGrowPastRefillAllowanceAndSurviveRestoration() {
+        UndoAllowance allowance = new UndoAllowance(10, 0, () -> 1000);
+        allowance.reward();
+        assertEquals(11, allowance.remaining());
+        allowance = new UndoAllowance(allowance.remaining(), allowance.refillAt(), () -> 1000);
+        assertEquals(11, allowance.remaining());
+        assertEquals(0, allowance.waitMillis());
+    }
+
+    @Test public void consumingRewardAllowanceStartsTimerOnlyAtZeroAndRefillsTen() {
+        AtomicLong now = new AtomicLong(1000);
+        UndoAllowance allowance = new UndoAllowance(20, 0, now::get);
+        for (int i = 0; i < 19; i++) {
+            allowance.consume();
+            assertEquals(19 - i, allowance.remaining());
+            assertEquals(0, allowance.refillAt());
+        }
+        allowance.consume();
+        assertEquals(0, allowance.remaining());
+        now.addAndGet(UndoAllowance.INTERVAL_MILLIS);
         assertEquals(10, allowance.remaining());
         assertEquals(0, allowance.refillAt());
     }

@@ -143,6 +143,16 @@ public class GamePersistenceTest {
                 saveJson(VERSION, state, state, List.of(), 1, 0, 0, 0, 0, 0, 0)));
     }
 
+    @Test public void decodeRestoresBonusUndoAllowanceAndLegacyExtraRewardProgress() throws Exception {
+        GameState state = sampleState();
+        GamePersistence.Saved saved = GamePersistence.decode(saveJson(VERSION, state, state, List.of(),
+                12, 5000, 20, 0, 2, 4, 0));
+        assertEquals(20, saved.undoRemaining());
+        assertEquals(0, saved.undoRefillAt());
+        assertEquals(2, saved.undoRewardWins());
+        assertEquals(3, saved.extraRewardWins());
+    }
+
     @Test public void decodeRejectsInvalidRewardProgress() {
         GameState state = sampleState();
         assertThrows(IllegalStateException.class, () -> GamePersistence.decode(

@@ -53,5 +53,8 @@ public final class GameConfig {
     public static final int EXTRA_TUBE_COOLDOWN_MINUTES = 15;
     public static final int UNDO_REFILL_MINUTES = 15;
     public static final int UNDO_ALLOWANCE = 10;
+    // Rewards can exceed the initial and timed refill allowance.
+    public static final int UNDO_REWARD_LIMIT = 20;
+    public static final int EXTRA_TUBE_REWARD_WINS = 4;
     private GameConfig() {}
 }

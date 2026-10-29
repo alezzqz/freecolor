@@ -298,11 +298,11 @@ public final class MainActivity extends Activity {
 
     private void recordWinRewards() {
         resetUnavailableRewards();
-        if (undoAllowance.remaining() < UndoAllowance.LIMIT && ++undoRewardWins == 3) {
+        if (undoAllowance.remaining() < UndoAllowance.REWARD_LIMIT && ++undoRewardWins == 3) {
             undoRewardWins = 0;
             pendingRewardEffects |= 1;
         }
-        if (!extraCooldown.available() && ++extraRewardWins == 5) {
+        if (!extraCooldown.available() && ++extraRewardWins == GameConfig.EXTRA_TUBE_REWARD_WINS) {
             extraRewardWins = 0;
             pendingRewardEffects |= 2;
         }
@@ -412,6 +412,7 @@ public final class MainActivity extends Activity {
         undo.setEnabled(active && !engine.history().isEmpty() && (dailyMode || remaining > 0));
         long seconds = (undoAllowance.waitMillis() + GameConfig.MILLIS_PER_SECOND - 1) / GameConfig.MILLIS_PER_SECOND;
         if (undoLabel != null) {
+            undoLabel.setTextColor(!dailyMode && remaining > UndoAllowance.LIMIT ? 0xffffd36a : Color.WHITE);
             undoLabel.setTextSize(dailyMode || remaining > 0 ? UNDO_COUNT_TEXT_SP : UNDO_TIMER_TEXT_SP);
             undoLabel.setText(dailyMode ? "∞" : remaining > 0 ? Integer.toString(remaining)
                     : String.format(Locale.ROOT, "%02d:%02d", seconds / GameConfig.SECONDS_PER_MINUTE,
@@ -479,7 +480,7 @@ public final class MainActivity extends Activity {
     }
 
     private void resetUnavailableRewards() {
-        if (undoAllowance.remaining() >= UndoAllowance.LIMIT) {
+        if (undoAllowance.remaining() >= UndoAllowance.REWARD_LIMIT) {
             undoRewardWins = 0;
         }
         if (extraCooldown.available()) {
