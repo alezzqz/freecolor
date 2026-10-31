@@ -19,9 +19,7 @@
 
 package com.freecolor.core;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 
 /** Dates make completion idempotent across retries, process restarts and clock changes. */
@@ -51,33 +49,41 @@ public final class DailyProgress {
         return session.successful() && completed.add(session.challenge().date());
     }
 
-    public static LocalDate weekStart(LocalDate date) {
-        return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-    }
-
     public int weekCount(LocalDate date) {
-        LocalDate start = weekStart(date);
-        int count = 0;
-        for (LocalDate day : completed) {
-            if (!day.isBefore(start) && day.isBefore(start.plusWeeks(1))) {
-                count++;
-            }
-        }
-        return count;
+        return summarize(date).days();
     }
 
     public int completedWeeks() {
-        Map<LocalDate, Integer> weeks = new HashMap<>();
-        for (LocalDate day : completed) {
-            weeks.merge(weekStart(day), 1, Integer::sum);
-        }
-        int count = 0;
-        for (int days : weeks.values()) {
-            if (days >= GameConfig.DAILY_WEEK_GOAL) {
-                count++;
+        return summarize(LocalDate.MAX).weeks();
+    }
+
+    private Summary summarize(LocalDate date) {
+        LocalDate start = null;
+        LocalDate last = null;
+        int days = 0;
+        int weeks = 0;
+        // Rebuild from saved dates so retries and restoration use exactly the same series boundaries.
+        for (LocalDate day : new TreeSet<>(completed)) {
+            if (day.isAfter(date)) {
+                break;
+            }
+            if (start == null || days == GameConfig.DAILY_WEEK_GOAL
+                    || day.toEpochDay() - start.toEpochDay() >= GameConfig.DAILY_WEEK_DAYS) {
+                start = day;
+                days = 0;
+            }
+            days++;
+            last = day;
+            if (days == GameConfig.DAILY_WEEK_GOAL) {
+                weeks++;
             }
         }
-        return count;
+        if (start != null && (days == GameConfig.DAILY_WEEK_GOAL ? date.isAfter(last)
+                : date.toEpochDay() - start.toEpochDay() >= GameConfig.DAILY_WEEK_DAYS)) {
+            days = 0;
+        }
+        return new Summary(days, weeks);
     }
-}
 
+    private record Summary(int days, int weeks) {}
+}

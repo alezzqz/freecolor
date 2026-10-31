@@ -28,6 +28,7 @@ import android.view.Gravity;
 import android.widget.*;
 import com.freecolor.R;
 import com.freecolor.core.*;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
@@ -58,8 +59,9 @@ final class DailyResultScreen extends ScrollView {
         if (!session.successful()) {
             text(content, "Попробуйте ещё раз, чтобы уложиться в цель.", 16, false);
         }
-        int days = progress.weekCount(session.challenge().date());
-        text(content, days >= GameConfig.DAILY_WEEK_GOAL ? "Недельная цель выполнена!"
+        int days = progress.weekCount(LocalDate.now());
+        boolean goalReached = days == GameConfig.DAILY_WEEK_GOAL;
+        text(content, goalReached ? "Недельная цель выполнена!"
                 : "Задач за неделю: " + days + " из " + GameConfig.DAILY_WEEK_GOAL, 18, true);
         if (retry != null) {
             button(content, session.successful() ? "Повторить" : "Попробовать снова", retry);

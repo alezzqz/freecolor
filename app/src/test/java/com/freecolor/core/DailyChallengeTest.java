@@ -100,35 +100,98 @@ public final class DailyChallengeTest {
     }
 
     @Test
-    public void fifthDayCompletesWeekAndLateSundayWinBelongsToPreviousWeek() {
+    public void sixthSuccessRemainsVisibleUntilTheNextDayAndReplayCannotRestartSeries() {
         DailyProgress progress = new DailyProgress();
-        for (int day = 0; day < 4; day++) {
-            DailySession session = session(MONDAY.plusDays(day), 3);
+        LocalDate start = MONDAY.plusDays(2);
+        for (int day = 0; day < 6; day++) {
+            DailySession session = session(start.plusDays(day), 3);
             finish(session);
-            progress.record(session);
+            assertTrue(progress.record(session));
+            assertEquals(day + 1, progress.weekCount(start.plusDays(day)));
+            assertEquals(day == 5 ? 1 : 0, progress.completedWeeks());
+            assertFalse(progress.record(session));
         }
-        assertEquals(0, progress.completedWeeks());
-        DailySession sunday = session(MONDAY.plusDays(6), 3);
-        finish(sunday);
-        progress.record(sunday);
-        assertEquals(5, progress.weekCount(MONDAY));
-        assertEquals(0, progress.weekCount(MONDAY.plusWeeks(1)));
-        assertEquals(1, progress.completedWeeks());
-        assertEquals(MONDAY, DailyProgress.weekStart(sunday.challenge().date()));
-        DailySession nextMonday = session(MONDAY.plusWeeks(1), 3);
-        finish(nextMonday);
-        progress.record(nextMonday);
-        assertEquals(1, progress.weekCount(MONDAY.plusWeeks(1)));
+        DailyProgress restored = new DailyProgress(progress.completedDates());
+        assertEquals(6, restored.weekCount(start.plusDays(5)));
+        assertEquals(0, restored.weekCount(start.plusDays(6)));
+        assertEquals(1, restored.completedWeeks());
+        DailySession next = session(start.plusDays(6), 3);
+        finish(next);
+        restored.record(next);
+        assertEquals(1, restored.weekCount(start.plusDays(6)));
+        assertEquals(1, restored.completedWeeks());
+    }
+
+    @Test
+    public void oneMissedDayStillAllowsSuccessOnTheSeventhDay() {
+        LocalDate start = MONDAY.plusDays(4);
+        DailyProgress progress = new DailyProgress(List.of(start, start.plusDays(1), start.plusDays(3),
+                start.plusDays(4), start.plusDays(5), start.plusDays(6)));
+        assertEquals(5, progress.weekCount(start.plusDays(5)));
+        assertEquals(6, progress.weekCount(start.plusDays(6)));
+        assertEquals(0, progress.weekCount(start.plusDays(7)));
         assertEquals(1, progress.completedWeeks());
     }
 
     @Test
-    public void weeksUseMondayAcrossYearAndLeapDayBoundaries() {
-        assertEquals(LocalDate.of(2026, 12, 28), DailyProgress.weekStart(LocalDate.of(2027, 1, 3)));
-        assertEquals(LocalDate.of(2027, 1, 4), DailyProgress.weekStart(LocalDate.of(2027, 1, 4)));
-        DailyProgress progress = new DailyProgress(List.of(LocalDate.of(2028, 2, 29)));
-        assertEquals(1, progress.weekCount(LocalDate.of(2028, 3, 1)));
-        assertEquals(0, progress.weekCount(LocalDate.of(2028, 3, 6)));
+    public void incompleteSeriesExpiresOnDayEightAndNextSuccessStartsANewWindow() {
+        DailyProgress progress = new DailyProgress(List.of(MONDAY, MONDAY.plusDays(1), MONDAY.plusDays(3),
+                MONDAY.plusDays(4), MONDAY.plusDays(6)));
+        assertEquals(5, progress.weekCount(MONDAY.plusDays(6)));
+        assertEquals(0, progress.weekCount(MONDAY.plusDays(7)));
+        assertEquals(0, progress.completedWeeks());
+        DailySession next = session(MONDAY.plusDays(9), 3);
+        finish(next);
+        progress.record(next);
+        DailyProgress restored = new DailyProgress(progress.completedDates());
+        assertEquals(1, restored.weekCount(MONDAY.plusDays(9)));
+        assertEquals(1, restored.weekCount(MONDAY.plusDays(15)));
+        assertEquals(0, restored.weekCount(MONDAY.plusDays(16)));
+        assertEquals(0, restored.completedWeeks());
+        assertEquals(6, restored.completedDates().size());
+    }
+
+    @Test
+    public void multipleSeriesAndLongAbsencesRetainOnlyCompletedAchievements() {
+        Set<LocalDate> dates = new HashSet<>();
+        for (int day = 0; day < 12; day++) {
+            dates.add(MONDAY.plusDays(day));
+        }
+        dates.add(MONDAY.plusDays(40));
+        DailyProgress progress = new DailyProgress(dates);
+        assertEquals(6, progress.weekCount(MONDAY.plusDays(11)));
+        assertEquals(0, progress.weekCount(MONDAY.plusDays(12)));
+        assertEquals(1, progress.weekCount(MONDAY.plusDays(40)));
+        assertEquals(0, progress.weekCount(MONDAY.plusDays(100)));
+        assertEquals(2, progress.completedWeeks());
+    }
+
+    @Test
+    public void seriesCrossYearAndLeapDayBoundariesWithoutCalendarWeekResets() {
+        for (LocalDate start : List.of(LocalDate.of(2026, 12, 29), LocalDate.of(2028, 2, 27))) {
+            Set<LocalDate> dates = new HashSet<>();
+            for (int day = 0; day < 6; day++) {
+                dates.add(start.plusDays(day));
+            }
+            DailyProgress progress = new DailyProgress(dates);
+            assertEquals(0, progress.weekCount(start.minusDays(1)));
+            assertEquals(6, progress.weekCount(start.plusDays(5)));
+            assertEquals(0, progress.weekCount(start.plusDays(6)));
+            assertEquals(1, progress.completedWeeks());
+        }
+    }
+
+    @Test
+    public void lateCompletionUsesChallengeDateAndDoesNotCountAsTodaysTask() {
+        DailyProgress progress = new DailyProgress(List.of(MONDAY, MONDAY.plusDays(1), MONDAY.plusDays(2),
+                MONDAY.plusDays(3), MONDAY.plusDays(4)));
+        DailySession old = session(MONDAY.plusDays(6), 3);
+        finish(old);
+        progress.record(old);
+        assertEquals(6, progress.weekCount(MONDAY.plusDays(6)));
+        assertEquals(0, progress.weekCount(MONDAY.plusDays(7)));
+        assertFalse(progress.completed(MONDAY.plusDays(7)));
+        assertEquals(1, progress.completedWeeks());
     }
 
     @Test

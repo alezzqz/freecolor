@@ -46,7 +46,9 @@ public final class GameConfig {
     public static final int DAILY_SEARCH_BUDGET = 25_000;
     public static final int DAILY_GENERATION_ATTEMPTS = 4;
     public static final int DAILY_MOVE_MARGIN = 3;
-    public static final int DAILY_WEEK_GOAL = 5;
+    // A series has seven calendar days to complete six distinct challenges.
+    public static final int DAILY_WEEK_DAYS = 7;
+    public static final int DAILY_WEEK_GOAL = 6;
     // Persisted global cooldowns; independent of level and undo snapshots.
     public static final long MILLIS_PER_SECOND = 1000L;
     public static final int SECONDS_PER_MINUTE = 60;

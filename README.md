@@ -66,9 +66,13 @@ restart resets the attempt counter while preserving the day's best result. Finis
 the target allows another attempt but gives no completion credit. Daily and ordinary
 attempts are saved independently, including the selected mode and undo histories.
 
-The weekly goal is five distinct successful daily challenges, Monday through Sunday.
+The weekly goal is six distinct successful daily challenges within seven calendar days,
+starting with the first successful challenge in a series, regardless of the weekday.
+An incomplete series expires at the start of day eight. A successful series stays at 6/6
+on its completion day and resets the next day; the next success starts another series.
 Replay cannot duplicate credit or remove an existing achievement. There is no gameplay
-timer or calendar. Weekly indicators and a lifetime count of completed weeks show progress.
+timer or calendar. Weekly indicators and a lifetime count of completed series show progress.
+Saved completion dates are interpreted using these rules, including existing saves.
 An unfinished older challenge can be completed after midnight, with credit belonging to
 its original date and week. Starting today's challenge replaces the older attempt after
 an explicit choice; older challenges cannot be restarted.
